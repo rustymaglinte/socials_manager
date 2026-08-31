@@ -1,0 +1,28 @@
+slug: pinoysing
+display_name: "PinoySing"
+tier: brand
+policy_profile: standard
+slack_channel: "#pinoysing-socials"
+
+accounts:
+  - platform: facebook # Page, via Graph API
+    page_id: "TODO"
+    enabled: true
+  - platform: x
+    handle: "TODO"
+    enabled: true
+  - platform: youtube
+    channel_id: "TODO"
+    enabled: true
+
+cadence:
+  max_per_day: 3
+  max_per_week: 12
+
+approval:
+  required: always
+  max_schedule_days_ahead: 30
+
+banned_terms: []
+hashtags:
+  default: ["#PinoySing", "#karaoke", "#videoke", "#onlinekaraoke"]

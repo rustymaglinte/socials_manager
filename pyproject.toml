@@ -1,0 +1,105 @@
+[project]
+name = "socials-manager"
+version = "0.1.0"
+description = "Approval-gated, multi-brand social media agent"
+requires-python = ">=3.11"
+
+dependencies = [
+    "langchain",
+    "langgraph",
+    "langgraph-checkpoint-postgres",
+    # No web framework: Slack is Socket Mode (outbound WebSocket), and the only
+    # inbound HTTP is the OAuth redirect -- a stdlib http.server, run on demand.
+    "slack-bolt",
+    # slack-bolt ships aiohttp as an extra, but AsyncSocketModeHandler is the
+    # only Socket Mode client we use, so it is a hard requirement here.
+    "aiohttp",
+    "sqlalchemy[asyncio]",
+    "asyncpg",
+    "alembic",
+    "pydantic",
+    "pydantic-settings",
+    "pyyaml",
+    "httpx",
+    "cryptography",
+    "tavily>=1.1.0",
+    "langchain-openai>=1.6.0",
+]
+
+[project.optional-dependencies]
+# Gateways
+openrouter = ["langchain-openrouter"]
+# Direct providers — keep at least one installed to A/B against the gateway
+anthropic = ["langchain-anthropic"]
+openai = ["langchain-openai"]
+google = ["langchain-google-genai"]
+dev = ["pytest", "pytest-asyncio", "import-linter", "ruff", "mypy"]
+
+[tool.uv]
+# Application, not a library: install dependencies only, never build a wheel
+# of the project itself. `app` is imported from the working directory.
+package = false
+
+# ---------------------------------------------------------------------------
+# Architectural boundaries. These replace a monorepo's package boundaries.
+# Run: lint-imports
+# ---------------------------------------------------------------------------
+
+[tool.importlinter]
+root_package = "app"
+# Required: the "framework-free" and "provider SDK" contracts name external
+# packages, which are invisible to the grapher without this.
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+layers = [
+    "app.api | app.transports",
+    "app.agent | app.workers",
+    "app.llm | app.platforms | app.credentials",
+    "app.store",
+    "app.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain is framework-free"
+type = "forbidden"
+source_modules = ["app.domain"]
+forbidden_modules = [
+    "langchain", "langgraph",
+    "langchain_anthropic", "langchain_openai", "langchain_google_genai",
+    "anthropic", "openai",
+    "fastapi", "slack_bolt",
+    "app.platforms", "app.agent", "app.api", "app.transports", "app.store",
+]
+
+[[tool.importlinter.contracts]]
+name = "Adapters are brand-blind"
+type = "forbidden"
+source_modules = ["app.platforms"]
+forbidden_modules = ["app.domain.brand", "app.agent", "app.store", "app.transports"]
+
+[[tool.importlinter.contracts]]
+name = "Publisher never talks to the model"
+type = "forbidden"
+source_modules = ["app.workers.publisher"]
+forbidden_modules = ["langchain", "langgraph", "anthropic", "app.agent"]
+
+[[tool.importlinter.contracts]]
+name = "Provider SDKs are confined to app.llm"
+type = "forbidden"
+source_modules = [
+    "app.agent", "app.domain", "app.workers",
+    "app.api", "app.transports", "app.platforms", "app.store",
+]
+forbidden_modules = [
+    "langchain_anthropic", "langchain_openai", "langchain_google_genai",
+    "langchain_openrouter", "anthropic", "openai",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

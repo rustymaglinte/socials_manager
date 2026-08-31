@@ -1,0 +1,56 @@
+# ---- Secrets -------------------------------------------------------------
+# Strategy: secrets live in ./secrets/ (ignored) or outside the repo entirely,
+# referenced by absolute path in an env var. The globs below are a safety net,
+# not the plan — keep them narrow enough that they never hide a real file.
+secrets/
+
+.env
+.env.*
+# ...but the checked-in template is the one .env file that must be committed.
+!.env.example
+
+# Google's OAuth client + service-account downloads use predictable names.
+client_secret*.json
+*.apps.googleusercontent.com.json
+*service-account*.json
+token.json
+
+*.pem
+*.key
+
+# ---- Python --------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---- uv / virtualenvs ----------------------------------------------------
+.venv/
+venv/
+# NOTE: uv.lock and .python-version are intentionally NOT ignored — commit both.
+
+# ---- Local data ----------------------------------------------------------
+*.db
+*.sqlite3
+media/
+uploads/
+media_cache/
+logs/
+*.log
+
+# ---- Tooling caches ------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.import_linter_cache/
+.coverage
+htmlcov/
+
+# ---- Editors / OS --------------------------------------------------------
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+.claude/settings.local.json
+Thumbs.db
+desktop.ini
+.DS_Store

@@ -1,0 +1,20 @@
+slug: personal
+display_name: "Rusty Maglinte"
+tier: personal # stricter defaults: never auto-publish
+policy_profile: personal
+slack_channel: "#personal-socials"
+
+accounts:
+  - platform: linkedin
+    handle: "TODO"
+    enabled: true
+  # NOTE: Facebook personal-profile posting is NOT possible via the Graph API
+  # (publish_actions removed in v3.0, 2018). Create a Page or keep it manual.
+
+cadence:
+  max_per_day: 1
+  max_per_week: 3
+
+approval:
+  required: always
+  max_schedule_days_ahead: 7

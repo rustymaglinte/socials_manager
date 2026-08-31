@@ -1,0 +1,38 @@
+slug: derekt
+display_name: "Derekt" # trading SaaS
+tier: brand
+policy_profile: strict # compliance-adjacent; see domain/policy/profiles/strict.py
+slack_channel: "#derekt-socials"
+
+accounts:
+  - platform: facebook # Page, via Graph API
+    page_id: "TODO"
+    enabled: true
+  - platform: x
+    handle: "TODO"
+    enabled: true
+  - platform: youtube
+    channel_id: "TODO"
+    enabled: true
+
+cadence:
+  max_per_day: 2
+  max_per_week: 10
+
+approval:
+  required: always
+  max_schedule_days_ahead: 30
+
+# Hard blocks — enforced in code, not by the model.
+banned_terms:
+  - "guaranteed returns"
+  - "risk-free"
+  - "can't lose"
+  - "get rich"
+  - "sure thing"
+
+required_disclaimers:
+  promotional: "Not financial advice. Trading involves risk of loss."
+
+hashtags:
+  default: ["#Derekt", "DeFi", "#trading", "tradingbot"]
