@@ -20,6 +20,9 @@ dependencies = [
     "pydantic",
     "pydantic-settings",
     "pyyaml",
+    # zoneinfo has no tz database to read on Windows; brands declare one
+    # (Asia/Manila) and a brief's date is wrong without it.
+    "tzdata",
     "httpx",
     "cryptography",
     "tavily>=1.1.0",

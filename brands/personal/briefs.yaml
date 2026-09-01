@@ -1,0 +1,30 @@
+# Brief angles — Rusty Maglinte
+#
+# One angle is picked per run and joined with `shared`, so the rules that apply
+# to every post are written once instead of repeated per angle. Selection and
+# assembly live in app/agent/brief.py; nothing in code knows these angle names,
+# so add, rename, and delete freely.
+#
+# Safe to leave half-written. Anything still containing TODO is dropped at load
+# with a warning, exactly like voice.md — a TODO rendered into the model's first
+# turn is worse than no angle at all. A brand with no usable angle simply cannot
+# be auto-briefed yet; briefing it by hand still works.
+#
+# Placeholder filled per run: {today} — the date in this brand's timezone. Set
+# `timezone:` in brand.yaml, or it resolves in UTC.
+
+shared: |
+  TODO: the instructions every post here must follow, whichever angle ran.
+  LinkedIn is the only enabled account, so this is where its shape belongs —
+  the first ~140 characters carry the hook, and the rest has to earn "see more".
+
+angles:
+  # TODO: name each angle for the kind of post it produces. Two is enough to
+  # start; more angles mean less repetition across runs.
+  todo_angle_one: |
+    TODO: what to search for or draw on, and what to draft from it. A personal
+    account can also be briefed from your own work rather than from a search.
+
+  todo_angle_two: |
+    TODO: a second angle, far enough from the first that alternating them does
+    not read as the same post twice. Use {today} if it depends on the date.

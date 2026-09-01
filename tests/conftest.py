@@ -22,8 +22,24 @@ from pathlib import Path
 
 import pytest
 
-from app.domain import brand as brand_module
-from app.domain.brand import Account, BrandContext
+from app.domain.brand import Account, BrandContext, BriefCatalog
+
+# The loader module, not the package facade: `app.domain.brand.BRANDS_DIR` is a
+# copy bound at import, so patching it there would leave the loader reading the
+# real brands/ directory.
+from app.domain.brand import loader as brand_loader
+
+PINOYSING_BRIEFS = """
+shared: |
+  Sundin ang voice ng brand na ito.
+  Ilimit up to 130 characters ang iyong post.
+
+angles:
+  trivia_music: |
+    Mag search ng trivia about karaoke at gumawa ng isang facebook post.
+  trending_music: |
+    Mag search ng trending topics ngayong araw, {today}, at gumawa ng post.
+"""
 
 PERSONAL_YAML = """
 slug: personal
@@ -77,9 +93,13 @@ cadence:
 """
 
 
+# Captured before any test repoints it, so `real_brands` can point back.
+REAL_BRANDS_DIR = brand_loader.BRANDS_DIR
+
+
 def _clear_brand_caches() -> None:
-    brand_module.load_brand.cache_clear()
-    brand_module.all_brands.cache_clear()
+    brand_loader.load_brand.cache_clear()
+    brand_loader.all_brands.cache_clear()
 
 
 @pytest.fixture
@@ -91,7 +111,7 @@ def brands_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     directory = tmp_path / "brands"
     directory.mkdir()
-    monkeypatch.setattr(brand_module, "BRANDS_DIR", directory)
+    monkeypatch.setattr(brand_loader, "BRANDS_DIR", directory)
     _clear_brand_caches()
     yield directory
     _clear_brand_caches()
@@ -101,7 +121,12 @@ def brands_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def write_brand(brands_dir: Path):
     """write_brand("personal", PERSONAL_YAML, voice="...") -> the brand directory."""
 
-    def _write(slug: str, config: str | None, voice: str | None = None) -> Path:
+    def _write(
+        slug: str,
+        config: str | None,
+        voice: str | None = None,
+        briefs: str | None = None,
+    ) -> Path:
         directory = brands_dir / slug
         directory.mkdir(parents=True, exist_ok=True)
         if config is not None:
@@ -110,9 +135,27 @@ def write_brand(brands_dir: Path):
             )
         if voice is not None:
             directory.joinpath("voice.md").write_text(voice, encoding="utf-8")
+        if briefs is not None:
+            directory.joinpath("briefs.yaml").write_text(
+                textwrap.dedent(briefs), encoding="utf-8"
+            )
         return directory
 
     return _write
+
+
+@pytest.fixture
+def real_brands(monkeypatch: pytest.MonkeyPatch):
+    """brands/ as committed, for the one test that checks the shipped files.
+
+    Everything else repoints BRANDS_DIR at a tmp_path. This deliberately does
+    not, so the caches are cleared on both sides here too -- a real entry left
+    behind would satisfy a later test that meant to read its own fixture.
+    """
+    monkeypatch.setattr(brand_loader, "BRANDS_DIR", REAL_BRANDS_DIR)
+    _clear_brand_caches()
+    yield brand_loader.all_brands()
+    _clear_brand_caches()
 
 
 @pytest.fixture
@@ -143,3 +186,15 @@ def make_brand(**overrides) -> BrandContext:
         "max_per_week": 10,
     }
     return BrandContext(**{**defaults, **overrides})
+
+
+def make_catalog(**overrides) -> BriefCatalog:
+    """A two-angle catalog, one of which needs today's date."""
+    defaults = {
+        "shared": "Keep it under 130 characters.",
+        "angles": {
+            "trivia": "Search for karaoke trivia and draft a post.",
+            "trending": "Search for what is trending today, {today}, and draft a post.",
+        },
+    }
+    return BriefCatalog(**{**defaults, **overrides})

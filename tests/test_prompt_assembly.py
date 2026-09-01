@@ -12,7 +12,7 @@ Two properties are worth more than the rest and are checked here explicitly:
 import re
 
 from app.agent.prompts.assembly import Segment, build_system_prompt, render
-from app.agent.prompts.prompt import SYSTEM_PROMPT
+from app.agent.prompts.system_prompt import SYSTEM_PROMPT
 from tests.conftest import make_brand
 
 

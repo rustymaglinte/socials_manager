@@ -1,0 +1,33 @@
+# Brief angles — Derekt
+#
+# One angle is picked per run and joined with `shared`, so the rules that apply
+# to every post are written once instead of repeated per angle. Selection and
+# assembly live in app/agent/brief.py; nothing in code knows these angle names,
+# so add, rename, and delete freely.
+#
+# Safe to leave half-written. Anything still containing TODO is dropped at load
+# with a warning, exactly like voice.md — a TODO rendered into the model's first
+# turn is worse than no angle at all. A brand with no usable angle simply cannot
+# be auto-briefed yet; briefing it by hand still works.
+#
+# Placeholder filled per run: {today} — the date in this brand's timezone. Set
+# `timezone:` in brand.yaml, or it resolves in UTC.
+
+shared: |
+  TODO: the instructions every post for this brand must follow, whichever angle
+  ran. This is the place for the length ceiling, which platform to draft for,
+  and whether to lean on the voice profile and examples.
+
+angles:
+  # TODO: name each angle for the kind of post it produces. Two is enough to
+  # start; more angles mean less repetition across runs.
+  todo_angle_one: |
+    TODO: what to search for, and what to draft from what it finds.
+
+  todo_angle_two: |
+    TODO: a second angle, far enough from the first that alternating them does
+    not read as the same post twice. Use {today} if it depends on the date.
+
+# Derekt is compliance-adjacent (policy_profile: strict). Banned terms and the
+# required disclaimer are enforced in code after drafting — do not restate them
+# here; the brand block already carries them into the system prompt.

@@ -2613,6 +2613,7 @@ dependencies = [
     { name = "slack-bolt" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "tavily" },
+    { name = "tzdata" },
 ]
 
 [package.optional-dependencies]
@@ -2662,6 +2663,7 @@ requires-dist = [
     { name = "slack-bolt" },
     { name = "sqlalchemy", extras = ["asyncio"] },
     { name = "tavily", specifier = ">=1.1.0" },
+    { name = "tzdata" },
 ]
 provides-extras = ["openrouter", "anthropic", "openai", "google", "dev"]
 

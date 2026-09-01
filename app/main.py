@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from langchain.messages import HumanMessage
 from langgraph.types import Command
 
+from app.agent.brief import build_brief, pick_angle
 from app.domain.brand import load_brand
 from app.llm.factory import agent_creation
 from app.transports.slack_approval.approval import request_approval
@@ -24,14 +25,9 @@ BRAND = "pinoysing"
 # (thread_id is LangGraph's key for a conversation -- nothing to do with Threads.)
 RUN_CONFIG = {"configurable": {"thread_id": "social-run-1"}}
 
-BRIEF = """Mag search online ng mga trivia at fun facts about karaoke or music at gumawa ng isang facebook post. 
-Siguruhing sundin ang voice at example patterns ng brand na ito.
-Magdagdag din ng naaayon na emojis sa iyong post katulad ng mga examples.
-Ilimit up to 130 characters ang iyong post."""
-
 # A rejection with a note sends the draft back for a rewrite. Capped, so a
 # reviewer who keeps rejecting can't spin the agent indefinitely.
-MAX_REVISIONS = 3
+MAX_REVISIONS = 5
 
 
 async def to_resume_decision(
@@ -157,8 +153,16 @@ async def run(brief: str) -> str:
 
 
 async def main() -> None:
+    # Built per run, never at import: the angles carry today's date, and this
+    # process outlives a day. `recent` stays empty until app.store can say what
+    # was actually posted (FR-4) -- that is the half that stops the model
+    # rediscovering the same trivia every morning.
+    brand = load_brand(BRAND)
+    angle = pick_angle(brand)
+    logging.info("Briefing %s on angle %r", brand.slug, angle)
+
     try:
-        answer = await run(BRIEF)
+        answer = await run(build_brief(brand, angle))
         logging.info("Printing agent's response...")
         print(answer)
     finally:

@@ -3,6 +3,9 @@ display_name: "PinoySing"
 tier: brand
 policy_profile: standard
 slack_channel: "#pinoysing-socials"
+# The audience's clock, not the server's -- decides what "ngayong araw" means
+# in a brief (see briefs.yaml).
+timezone: "Asia/Manila"
 
 accounts:
   - platform: facebook # Page, via Graph API

@@ -1,0 +1,21 @@
+# Brief angles for PinoySing.
+#
+# `shared` is appended to whichever angle is picked, so the rules that apply to
+# every post are written once. `{today}` is filled at build time in the brand's
+# timezone -- never at import, or a long-lived process posts yesterday's date.
+
+shared: |
+  Siguruhing sundin ang voice at example patterns ng brand na ito.
+  Magdagdag din ng naaayon na emojis sa iyong post katulad ng mga examples.
+  Ilimit up to 130 characters ang iyong post.
+
+angles:
+  trivia_music: |
+    Mag search online ng mga trivia at fun facts about karaoke or music at gumawa ng isang facebook post.
+
+  trending_music: |
+    Mag search online ng mga trending topics about karaoke or music ngayong araw, {today}, at gumawa ng isang facebook post.
+
+  fun_nonmusic: |
+    Mag search online ng mga nakakaaliw na trending topics ngayong araw, {today}, at gumawa ng isang facebook post.
+    Okay lang kahit di related sa music or karaoke basta nakakaaliw.

@@ -3,6 +3,11 @@ display_name: "Rusty Maglinte"
 tier: personal # stricter defaults: never auto-publish
 policy_profile: personal
 slack_channel: "#personal-socials"
+# The audience's clock, not the server's -- decides what "today" means in a
+# brief. Left out, it resolves in UTC. Uncomment with an IANA name once the
+# audience's timezone is decided; a name that is not in the tz database fails
+# at load rather than mid-run. (Not "TODO": this one is validated.)
+# timezone: "Asia/Manila"
 
 accounts:
   - platform: linkedin

@@ -15,7 +15,7 @@ factory; this module assumes only that they come first.
 import re
 from dataclasses import dataclass
 
-from app.agent.prompts.prompt import BRAND_BLOCK, SYSTEM_PROMPT
+from app.agent.prompts.system_prompt import BRAND_BLOCK, SYSTEM_PROMPT
 from app.domain.brand import BrandContext
 
 _NO_VOICE = (

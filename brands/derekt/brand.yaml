@@ -3,6 +3,11 @@ display_name: "Derekt" # trading SaaS
 tier: brand
 policy_profile: strict # compliance-adjacent; see domain/policy/profiles/strict.py
 slack_channel: "#derekt-socials"
+# The audience's clock, not the server's -- decides what "today" means in a
+# brief. Left out, it resolves in UTC. Uncomment with an IANA name once the
+# audience's timezone is decided; a name that is not in the tz database fails
+# at load rather than mid-run. (Not "TODO": this one is validated.)
+# timezone: "UTC"
 
 accounts:
   - platform: facebook # Page, via Graph API

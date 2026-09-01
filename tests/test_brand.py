@@ -8,7 +8,9 @@ draft in another brand's channel.
 import pytest
 
 from app.domain.brand import (
+    PLACEHOLDER,
     Account,
+    BrandMisconfigured,
     BrandNotFound,
     all_brands,
     brand_for_channel,
@@ -16,7 +18,21 @@ from app.domain.brand import (
     normalise_channel,
     normalise_hashtag,
 )
-from tests.conftest import DEREKT_YAML, PERSONAL_YAML
+from tests.conftest import DEREKT_YAML, PERSONAL_YAML, PINOYSING_BRIEFS
+
+
+def test_the_shipped_brand_files_all_load(real_brands):
+    """A smoke test over brands/ as committed, not a tmp_path fixture.
+
+    These are hand-edited YAML that nothing else in the suite reads, so a syntax
+    error or a bad timezone in one would otherwise surface at runtime. Says
+    nothing about angles being written yet -- a template with none is valid.
+    """
+    for brand in real_brands:
+        assert brand.display_name
+        assert PLACEHOLDER not in brand.briefs.shared
+        for name, text in brand.briefs.angles.items():
+            assert PLACEHOLDER not in text, f"{brand.slug}/{name} shipped a TODO"
 
 
 @pytest.mark.parametrize(
@@ -140,6 +156,76 @@ def test_template_voice_is_treated_as_no_voice(write_brand):
     write_brand("derekt", DEREKT_YAML, voice="# Voice\n\nTODO: describe the voice.")
 
     assert load_brand("derekt").voice is None
+
+
+def test_briefs_load_from_the_brand_directory(write_brand):
+    write_brand("pinoysing", 'display_name: "PinoySing"', briefs=PINOYSING_BRIEFS)
+
+    catalog = load_brand("pinoysing").briefs
+
+    assert catalog.angle_names == ("trending_music", "trivia_music")
+    assert "Ilimit up to 130 characters" in catalog.shared
+    # The placeholder survives loading; it is filled per run, not per read.
+    assert "{today}" in catalog.angles["trending_music"]
+
+
+def test_a_brand_without_briefs_yaml_gets_an_empty_catalog(write_brand):
+    """Briefable by hand is a valid state; it must not be a load failure."""
+    write_brand("derekt", DEREKT_YAML)
+
+    assert load_brand("derekt").briefs.angle_names == ()
+
+
+def test_a_todo_angle_is_skipped_rather_than_briefed(write_brand):
+    write_brand(
+        "half",
+        'display_name: "Half"',
+        briefs="""
+        angles:
+          ready: "Search for karaoke trivia and draft a post."
+          unwritten: "TODO: decide what this angle asks for."
+          blank: ""
+        """,
+    )
+
+    assert load_brand("half").briefs.angle_names == ("ready",)
+
+
+def test_a_todo_shared_block_is_dropped_even_when_an_angle_is_ready(write_brand):
+    """The shared block reaches every brief, so a TODO there leaks into all of them."""
+    write_brand(
+        "half",
+        'display_name: "Half"',
+        briefs="""
+        shared: "TODO: decide the rules every post follows."
+        angles:
+          ready: "Search for karaoke trivia and draft a post."
+        """,
+    )
+
+    catalog = load_brand("half").briefs
+
+    assert catalog.shared == ""
+    assert catalog.angle_names == ("ready",)  # the usable angle survives
+
+
+def test_timezone_defaults_to_utc_when_undeclared(write_brand):
+    write_brand("derekt", DEREKT_YAML)
+
+    assert load_brand("derekt").timezone == "UTC"
+
+
+def test_declared_timezone_is_kept(write_brand):
+    write_brand("pinoysing", 'display_name: "PinoySing"\ntimezone: "Asia/Manila"')
+
+    assert load_brand("pinoysing").timezone == "Asia/Manila"
+
+
+def test_an_unknown_timezone_fails_at_load_not_mid_run(write_brand):
+    write_brand("typo", 'display_name: "Typo"\ntimezone: "Asia/Manilla"')
+
+    with pytest.raises(BrandMisconfigured, match="Asia/Manilla"):
+        load_brand("typo")
 
 
 def test_enabled_accounts_filters_disabled_ones(write_brand):
