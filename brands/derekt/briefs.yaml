@@ -5,29 +5,71 @@
 # assembly live in app/agent/brief.py; nothing in code knows these angle names,
 # so add, rename, and delete freely.
 #
-# Safe to leave half-written. Anything still containing TODO is dropped at load
-# with a warning, exactly like voice.md — a TODO rendered into the model's first
-# turn is worse than no angle at all. A brand with no usable angle simply cannot
-# be auto-briefed yet; briefing it by hand still works.
-#
 # Placeholder filled per run: {today} — the date in this brand's timezone. Set
 # `timezone:` in brand.yaml, or it resolves in UTC.
+#
+# Derekt is compliance-adjacent (policy_profile: strict). The banned terms and
+# the promotional disclaimer are enforced in code after drafting and are already
+# carried into the system prompt by the brand block — they are not restated
+# here. What *is* here is the softer half that code cannot check: no forecasts,
+# no unsourced numbers, no implied performance.
 
 shared: |
-  TODO: the instructions every post for this brand must follow, whichever angle
-  ran. This is the place for the length ceiling, which platform to draft for,
-  and whether to lean on the voice profile and examples.
+  Follow this brand's voice profile and example posts.
+  Write for someone who already trades perps and reads indicators — explain the
+  idea, never the fundamentals.
+  Say what the software does. Never predict what a market, a token, or a
+  strategy will do next, and never phrase a backtest or a paper run as a
+  forecast of live results.
+  Use no number you did not just look up, and never present a return, a P&L, or
+  a win rate as something Derekt delivers.
+  Stay inside what Derekt can do today. Its selector currently offers ten pairs
+  — BTC, ETH, SOL, HYPE, ZEC, FARTCOIN, LIT, XMR, XRP, PUMP — so never imply
+  another one can be traded or backtested here. The list grows over time. It is
+  a scope decision and says nothing about the pairs not on it: never write a
+  post that contrasts them, ranks them, or implies they are lower quality.
+  Rules are built from the shipped indicator templates, which read price and
+  volume: funding rates and open interest are not inputs a strategy can act on,
+  and backtests model neither funding nor liquidation.
+  One thought per post, drafted for X, up to 240 characters.
+  Emojis are optional and at most one — this brand is dry, not loud.
 
 angles:
-  # TODO: name each angle for the kind of post it produces. Two is enough to
-  # start; more angles mean less repetition across runs.
-  todo_angle_one: |
-    TODO: what to search for, and what to draft from what it finds.
+  hyperliquid_pulse: |
+    Search online for what is happening on Hyperliquid today, {today} — volume,
+    new pair listings, funding rates, a notable move, an ecosystem update — and
+    draft a post about it. Report what happened and what it means for someone
+    running automation on that venue. Do not call the trade.
 
-  todo_angle_two: |
-    TODO: a second angle, far enough from the first that alternating them does
-    not read as the same post twice. Use {today} if it depends on the date.
+  indicator_explainer: |
+    Pick one indicator Derekt ships as a strategy template (RSI, MACD, Bollinger
+    Bands, Supertrend, ADX/DMI, Ichimoku, Donchian, Keltner, PSAR, Stochastic
+    RSI, VWAP, divergence) and draft a post that explains, in one thought, what
+    it actually measures and the kind of entry or exit rule it belongs in.
+    Search if you need the definition exact. Teach it; do not recommend it.
 
-# Derekt is compliance-adjacent (policy_profile: strict). Banned terms and the
-# required disclaimer are enforced in code after drafting — do not restate them
-# here; the brand block already carries them into the system prompt.
+  paper_before_live: |
+    Draft a post about one step of the backtest → paper → live loop: a strategy
+    tested against history, then run against real-time market data with
+    simulated fills, before it ever touches capital. Pick a single concrete
+    detail — a virtual balance, configured slippage, a fee assumption, the same
+    engine running all three — rather than describing the whole loop at once.
+
+  non_custodial: |
+    Draft a post on the trust posture. The trader connects their own wallet;
+    Derekt never custodies funds. A live bot signs through a Hyperliquid agent
+    wallet, authorised once on-chain, that can place and close orders but cannot
+    withdraw. Frame it as an architectural property, not as a safety promise.
+
+  rekt_lessons: |
+    Search online for a recent, public account of how retail perp traders got
+    wrecked around {today} — a liquidation cascade, a funding squeeze, a
+    delisting, over-leverage into an event — and draft a post drawing the
+    risk-discipline lesson. Name the mistake, never a person or an account, and
+    never anyone's specific loss.
+
+  automation_vs_manual: |
+    Draft a post about a failure mode of trading by hand that rules-based
+    automation removes: revenge entries, a stop moved after the fact, missing
+    the setup while asleep, sizing by feeling. Describe the human behaviour
+    honestly; do not claim the bot wins, only that the rule does not flinch.

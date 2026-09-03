@@ -1,12 +1,16 @@
 import asyncio
 import logging
+import sys
 
 from dotenv import load_dotenv
 from langchain.messages import HumanMessage
 from langgraph.types import Command
 
 from app.agent.brief import build_brief, pick_angle
+from app.domain import brand
 from app.domain.brand import load_brand
+from app.domain.brand.context import BrandContext, BrandNotFound
+from app.domain.brand.loader import all_brands
 from app.llm.factory import agent_creation
 from app.transports.slack_approval.approval import request_approval
 from app.transports.slack_approval.client import start_listener, stop_listener
@@ -19,11 +23,9 @@ load_dotenv()
 # The brand this run is bound to. Hard-coded until the Slack transport drives the
 # run and resolves it from the channel the brief arrived in (SPECS D3); either
 # way it is decided here, never read back out of the model's tool arguments.
-BRAND = "pinoysing"
 
 # Both invokes must carry the same thread_id, or the resume can't find the run.
 # (thread_id is LangGraph's key for a conversation -- nothing to do with Threads.)
-RUN_CONFIG = {"configurable": {"thread_id": "social-run-1"}}
 
 # A rejection with a note sends the draft back for a rewrite. Capped, so a
 # reviewer who keeps rejecting can't spin the agent indefinitely.
@@ -58,7 +60,7 @@ async def to_resume_decision(
         }
 
     verdict = await request_approval(
-        brand=BRAND, platform=platform, content=args["content"]
+        brand=brand_from_argv().slug, platform=platform, content=args["content"]
     )
 
     if verdict["decision"] == "approved":
@@ -107,7 +109,7 @@ async def to_resume_decision(
     }
 
 
-async def run(brief: str) -> str:
+async def run(brief: str, brand: BrandContext) -> str:
     """One brief, start to finish. Returns the agent's closing message."""
     # Connect before the agent runs, so the socket is live when the first click
     # lands -- and on this loop, so the listener keeps serving while we await a
@@ -115,9 +117,11 @@ async def run(brief: str) -> str:
     logging.info("Connecting Slack listener...")
     await start_listener()
 
+    RUN_CONFIG = {"configurable": {"thread_id": "social-run-1"}}
+
     # One slug decides both the context the model gets and the channel the draft
     # is shown in, so the two can never disagree (SPECS D3).
-    agent = agent_creation(load_brand(BRAND))
+    agent = agent_creation(brand)
 
     # One post per platform. The model will sometimes offer a second variant for
     # a platform it already submitted, and every extra call would cost the
@@ -152,17 +156,32 @@ async def run(brief: str) -> str:
     return response["messages"][-1].content
 
 
+def brand_from_argv() -> BrandContext:
+    """The brand this run is for, named on the command line.
+
+    Interim: prod resolves the brand from the channel a brief arrives in
+    (SPECS D3). This exists so a run can be driven by hand before that lands.
+    """
+    if len(sys.argv) != 2:
+        known = ", ".join(b.slug for b in all_brands())
+        raise SystemExit(f"Usage: python -m app.main <brand>\nBrands: {known}")
+    try:
+        return load_brand(sys.argv[1])
+    except BrandNotFound as error:
+        raise SystemExit(str(error)) from error
+
+
 async def main() -> None:
     # Built per run, never at import: the angles carry today's date, and this
     # process outlives a day. `recent` stays empty until app.store can say what
     # was actually posted (FR-4) -- that is the half that stops the model
     # rediscovering the same trivia every morning.
-    brand = load_brand(BRAND)
+    brand = brand_from_argv()
     angle = pick_angle(brand)
     logging.info("Briefing %s on angle %r", brand.slug, angle)
 
     try:
-        answer = await run(build_brief(brand, angle))
+        answer = await run(build_brief(brand, angle), brand)
         logging.info("Printing agent's response...")
         print(answer)
     finally:
