@@ -26,6 +26,7 @@ from app.domain.brand.context import (
     BrandMisconfigured,
     BrandNotFound,
     BriefCatalog,
+    PostTheme,
     normalise_channel,
     normalise_hashtag,
 )
@@ -102,6 +103,37 @@ def _load_briefs(path: Path, slug: str) -> BriefCatalog:
     return BriefCatalog(shared=shared, angles=angles)
 
 
+def _theme(raw: dict[str, Any] | None, slug: str) -> PostTheme | None:
+    """Read the `theme:` block, or None if the brand has not got one yet.
+
+    Absent is fine and means text-only posts. Half-present is not: a graphic
+    missing its accent colour would render, silently, in the wrong palette on a
+    live Page -- so a partial theme is dropped with a warning rather than
+    completed with defaults.
+    """
+    if not raw:
+        return None
+
+    required = ("ground", "accent", "muted", "wordmark", "tagline")
+    missing = [key for key in required if not raw.get(key)]
+    if missing:
+        logger.warning(
+            "theme for %s is missing %s; posting without graphics",
+            slug,
+            ", ".join(missing),
+        )
+        return None
+
+    return PostTheme(
+        ground=raw["ground"],
+        accent=raw["accent"],
+        muted=raw["muted"],
+        wordmark=raw["wordmark"],
+        tagline=raw["tagline"],
+        templates=dict(raw.get("templates") or {}),
+    )
+
+
 def _timezone(name: str, slug: str) -> str:
     """Validate at load, so a typo surfaces here and not mid-run."""
     try:
@@ -145,6 +177,7 @@ def load_brand(slug: str) -> BrandContext:
         max_per_week=int(cadence.get("max_per_week", 0)),
         timezone=_timezone(raw.get("timezone") or DEFAULT_TIMEZONE, slug),
         briefs=_load_briefs(directory / "briefs.yaml", slug),
+        theme=_theme(raw.get("theme"), slug),
     )
 
 

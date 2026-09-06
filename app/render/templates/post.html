@@ -1,0 +1,164 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  /* Authored at 1080px. One rem is a hundred-and-eighth of the square, so every
+     size below is proportional and the same template renders at any resolution
+     -- a 540px preview and a 1080px upload differ only in the root font-size. */
+  html { font-size: calc(__SIZE__px / 108); }
+
+  __FONTS__
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    width: __SIZE__px; height: __SIZE__px;
+    background: __GROUND__;
+    font-family: Archivo, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sq {
+    position: relative; width: 100%; height: 100%; overflow: hidden;
+    display: flex; flex-direction: column;
+    font-family: Anton, sans-serif; text-transform: uppercase;
+    background: __GROUND__; color: __ACCENT__;
+  }
+
+  .hook {
+    font-size: 11.8rem; line-height: .93; letter-spacing: .008em;
+    text-wrap: balance;
+  }
+  .sub {
+    font-family: Archivo, sans-serif; text-transform: none; font-weight: 500;
+    font-size: 3.7rem; line-height: 1.32; margin-top: 3.1rem; color: __MUTED__;
+  }
+  .lockup {
+    display: flex; align-items: center; gap: 1.8rem;
+    font-family: Archivo, sans-serif; font-weight: 700; font-size: 2.4rem;
+    letter-spacing: .19em; text-transform: uppercase;
+  }
+  .lockup svg { width: 2.8rem; height: 4.3rem; flex: none; }
+
+  .wave { display: flex; align-items: flex-end; gap: .65rem; height: 7.4rem; }
+  .wave i { display: block; width: .86rem; border-radius: .2rem; background: currentColor; }
+
+  /* --- marquee: the avatar scaled up ------------------------------------- */
+  .t-marquee { padding: 8.6rem; justify-content: space-between; }
+
+  /* --- spotlight: inverted, loudest in a feed ---------------------------- */
+  .t-spotlight { padding: 8.6rem; justify-content: space-between;
+                 background: __ACCENT__; color: __GROUND__; }
+  .t-spotlight .sub { color: __GROUND__; opacity: .72; }
+  /* A watermark, not an illustration: pushed into the corner far enough that it
+     never competes with the hook or crowds the waveform on the opposite side. */
+  .t-spotlight .mic {
+    position: absolute; right: -8.5rem; bottom: -7rem; width: 47rem;
+    opacity: .15; pointer-events: none;
+  }
+
+  /* --- stage: locked footer, strongest as a system ----------------------- */
+  .t-stage .top { flex: 1; padding: 8.6rem 8.6rem 0; display: flex;
+                  flex-direction: column; justify-content: center; }
+  /* The gap is structural: the waveform is a divider between the two bands, and
+     letting it touch the footer reads as the bars being clipped by it. */
+  .t-stage .divider { padding: 0 8.6rem 4.4rem; }
+  .t-stage .divider .wave { height: 5.6rem; }
+  .t-stage .foot {
+    background: __ACCENT__; color: __GROUND__;
+    padding: 3.9rem 8.6rem; display: flex; align-items: center;
+    justify-content: space-between; gap: 3rem;
+  }
+  .t-stage .tagline {
+    font-family: Archivo, sans-serif; text-transform: none; font-weight: 600;
+    font-size: 3rem; letter-spacing: 0;
+  }
+
+  .eyebrow-only { font-family: Archivo, sans-serif; font-weight: 700;
+                  font-size: 2.4rem; letter-spacing: .19em; }
+</style>
+
+<div class="sq t-__TEMPLATE__" id="card">
+
+  <!-- marquee + spotlight share this head slot; stage has no head -->
+  <div class="head">
+    <div class="lockup">
+      <svg viewBox="0 0 13 20" fill="none" aria-hidden="true">
+        <rect x="4" y="0" width="5" height="10" rx="2.5" fill="currentColor"/>
+        <path d="M1.5 8.2a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+        <rect x="5.9" y="13.4" width="1.2" height="4.2" fill="currentColor"/>
+        <rect x="3.2" y="18.2" width="6.6" height="1.4" rx=".7" fill="currentColor"/>
+      </svg>
+      <span id="head-label">__EYEBROW__</span>
+    </div>
+  </div>
+
+  <div class="middle">
+    <p class="hook">__HOOK__</p>
+    <p class="sub" id="sub">__SUB__</p>
+  </div>
+
+  <div class="wave" id="wave"></div>
+
+  <svg class="mic" viewBox="0 0 130 200" fill="none" aria-hidden="true">
+    <rect x="40" y="4" width="50" height="100" rx="25" fill="currentColor"/>
+    <path d="M15 82a50 50 0 0 0 100 0" stroke="currentColor" stroke-width="14" fill="none" stroke-linecap="round"/>
+    <rect x="58" y="134" width="14" height="44" fill="currentColor"/>
+    <rect x="32" y="182" width="66" height="14" rx="7" fill="currentColor"/>
+  </svg>
+
+  <div class="foot">
+    <div class="lockup">
+      <svg viewBox="0 0 13 20" fill="none" aria-hidden="true">
+        <rect x="4" y="0" width="5" height="10" rx="2.5" fill="currentColor"/>
+        <path d="M1.5 8.2a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+        <rect x="5.9" y="13.4" width="1.2" height="4.2" fill="currentColor"/>
+        <rect x="3.2" y="18.2" width="6.6" height="1.4" rx=".7" fill="currentColor"/>
+      </svg>
+      <span>__WORDMARK__</span>
+    </div>
+    <span class="tagline">__TAGLINE__</span>
+  </div>
+
+</div>
+
+<script>
+  // A designed silhouette rather than noise: fixed heights mean the waveform is
+  // identical on every post, which is the point of it being brand furniture.
+  const HEIGHTS = [8,14,22,31,19,12,26,38,29,17,11,24,33,44,30,20,13,9,16,27,
+                   36,25,15,10,21,32,23,14,8,12,20,29,18,11,25,34,22,13,9,15];
+
+  const card = document.getElementById('card');
+  const template = card.classList.contains('t-stage') ? 'stage'
+                 : card.classList.contains('t-spotlight') ? 'spotlight' : 'marquee';
+
+  // Each template uses a different subset of the same markup. Rearranging here
+  // rather than shipping three near-identical HTML files keeps the type scale
+  // and the lockup defined exactly once.
+  const head = card.querySelector('.head');
+  const middle = card.querySelector('.middle');
+  const wave = card.querySelector('#wave');
+  const mic = card.querySelector('.mic');
+  const foot = card.querySelector('.foot');
+
+  if (template === 'stage') {
+    head.remove(); mic.remove();
+    const top = document.createElement('div'); top.className = 'top';
+    top.appendChild(middle);
+    const divider = document.createElement('div'); divider.className = 'divider';
+    divider.appendChild(wave);
+    card.prepend(divider); card.prepend(top);
+  } else {
+    foot.remove();
+    if (template === 'marquee') mic.remove();
+    if (!document.getElementById('head-label').textContent.trim()) head.remove();
+  }
+
+  if (!document.getElementById('sub').textContent.trim()) {
+    document.getElementById('sub').remove();
+  }
+
+  const box = wave.clientHeight || 74;
+  wave.innerHTML = HEIGHTS
+    .map(h => `<i style="height:${Math.max(3, Math.round(h / 44 * box))}px"></i>`)
+    .join('');
+</script>

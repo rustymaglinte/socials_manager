@@ -69,6 +69,30 @@ class BriefCatalog:
 
 
 @dataclass(frozen=True)
+class PostTheme:
+    """How this brand's post graphics look.
+
+    Values only, and deliberately not the renderer's own type: `app.render` sits
+    above the domain, so a brand knowing what its posts look like must not mean
+    the domain importing a renderer. The caller maps this across, which is the
+    same join it already makes for credentials.
+    """
+
+    ground: str
+    accent: str
+    muted: str
+    wordmark: str
+    tagline: str
+    # angle name -> template. `default` covers any angle not named.
+    templates: dict[str, str] = field(default_factory=dict)
+
+    def template_for(self, angle: str | None) -> str:
+        """Which look an angle gets. Unknown angles fall back rather than fail --
+        a new angle in briefs.yaml should produce a plain post, not an error."""
+        return self.templates.get(angle or "", self.templates.get("default", "marquee"))
+
+
+@dataclass(frozen=True)
 class BrandContext:
     """One brand, resolved before the model is invoked (SPECS D3).
 
@@ -93,6 +117,8 @@ class BrandContext:
     # araw" from a UTC box would carry yesterday's date for the first 8 hours.
     timezone: str = DEFAULT_TIMEZONE
     briefs: BriefCatalog = field(default_factory=BriefCatalog)
+    # None while the brand declares no theme -- it can still post text.
+    theme: PostTheme | None = None
 
     @property
     def enabled_accounts(self) -> tuple[Account, ...]:

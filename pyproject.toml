@@ -27,6 +27,11 @@ dependencies = [
     "cryptography",
     "tavily>=1.1.0",
     "langchain-openai>=1.6.0",
+    # Post graphics are rendered by screenshotting the same HTML/CSS the design
+    # was approved in, so the template is the single source of the look. The
+    # alternative (Pillow) would mean re-implementing text layout and letting the
+    # rendered post drift from the design. Needs `playwright install chromium`.
+    "playwright",
 ]
 
 [project.optional-dependencies]
@@ -60,7 +65,7 @@ type = "layers"
 layers = [
     "app.api | app.transports",
     "app.agent | app.workers",
-    "app.llm | app.platforms | app.credentials",
+    "app.llm | app.platforms | app.credentials | app.render",
     "app.store",
     "app.domain",
 ]
@@ -81,6 +86,15 @@ forbidden_modules = [
 name = "Adapters are brand-blind"
 type = "forbidden"
 source_modules = ["app.platforms"]
+forbidden_modules = ["app.domain.brand", "app.agent", "app.store", "app.transports"]
+
+# Same argument as the adapters, for the same reason: a renderer that could read
+# a BrandContext could put one brand's words on another brand's ground. It takes
+# colours and strings; the caller decides whose they are.
+[[tool.importlinter.contracts]]
+name = "The renderer is brand-blind"
+type = "forbidden"
+source_modules = ["app.render"]
 forbidden_modules = ["app.domain.brand", "app.agent", "app.store", "app.transports"]
 
 [[tool.importlinter.contracts]]

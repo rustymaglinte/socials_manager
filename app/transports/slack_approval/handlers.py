@@ -14,11 +14,17 @@ on the same loop the waiter is suspended on, so `registry.resolve` and the
 waiter's wake-up need no cross-thread handoff.
 """
 
+import asyncio
+from asyncio.log import logger
 import json
 
+from app.agent.brief import build_brief, pick_angle
+from app.domain.brand.context import BrandContext
 from app.transports.slack_approval import blocks
 from app.transports.slack_approval.client import app, update_message
 from app.transports.slack_approval.pending import registry
+from app.main import run
+from app.transports.slack_approval.client import brand_for_channel_id
 
 EXPIRED_SUFFIX = "  _(request already expired)_"
 
@@ -189,3 +195,18 @@ async def on_edit_submit(ack, body, view, client):
         verdict,
         blocks.settled_message(brand, platform, edited, verdict),
     )
+
+
+async def _brief_run(brand: BrandContext) -> None:
+    try:
+        answer = await run(build_brief(brand, pick_angle(brand)), brand)
+        logger.info("Run for %s finished: %s", brand.slug, answer)
+    except Exception:
+        logger.exception("Run for %s failed", brand.slug)
+
+
+@app.event("app_mention")
+async def on_brief(ack, event):
+    await ack()
+    brand = brand_for_channel_id(event["channel"])
+    asyncio.create_task(_brief_run(brand))

@@ -5,6 +5,7 @@ import sys
 from dotenv import load_dotenv
 from langchain.messages import HumanMessage
 from langgraph.types import Command
+from uuid_utils import uuid4
 
 from app.agent.brief import build_brief, pick_angle
 from app.domain import brand
@@ -23,7 +24,6 @@ load_dotenv()
 # The brand this run is bound to. Hard-coded until the Slack transport drives the
 # run and resolves it from the channel the brief arrived in (SPECS D3); either
 # way it is decided here, never read back out of the model's tool arguments.
-
 # Both invokes must carry the same thread_id, or the resume can't find the run.
 # (thread_id is LangGraph's key for a conversation -- nothing to do with Threads.)
 
@@ -33,10 +33,12 @@ MAX_REVISIONS = 5
 
 
 async def to_resume_decision(
-    action: dict, submitted: set[str], revisions: list[str]
+    brand: BrandContext, action: dict, submitted: set[str], revisions: list[str]
 ) -> dict:
     """Ask a human about one pending tool call, in the shape the middleware wants.
 
+    `brand` is the run's brand, passed down rather than looked up: the run may
+    have been started by a Slack mention, where there is no command line to read.
     `submitted` and `revisions` are the run's memory across gate hits; they are
     passed in rather than global so a second run in the same process starts clean.
     """
@@ -44,7 +46,7 @@ async def to_resume_decision(
 
     # Platform is what identifies a variant, and it is optional on the tool, so
     # fall back to its default rather than assuming the model sent one. There is
-    # no brand argument to read: BRAND decides the channel (SPECS D3).
+    # no brand argument to read: `brand` decides the channel (SPECS D3).
     platform = args.get("platform", "default")
 
     if platform in submitted:
@@ -60,7 +62,7 @@ async def to_resume_decision(
         }
 
     verdict = await request_approval(
-        brand=brand_from_argv().slug, platform=platform, content=args["content"]
+        brand=brand.slug, platform=platform, content=args["content"]
     )
 
     if verdict["decision"] == "approved":
@@ -117,7 +119,7 @@ async def run(brief: str, brand: BrandContext) -> str:
     logging.info("Connecting Slack listener...")
     await start_listener()
 
-    RUN_CONFIG = {"configurable": {"thread_id": "social-run-1"}}
+    run_config = {"configurable": {"thread_id": f"{brand.slug}-{uuid4()}"}}
 
     # One slug decides both the context the model gets and the channel the draft
     # is shown in, so the two can never disagree (SPECS D3).
@@ -131,7 +133,7 @@ async def run(brief: str, brand: BrandContext) -> str:
 
     logging.info("Sending brief to agent...")
     response = await agent.ainvoke(
-        {"messages": [HumanMessage(content=brief)]}, RUN_CONFIG
+        {"messages": [HumanMessage(content=brief)]}, run_config
     )
 
     # A while, not an if: the agent can hit the gate more than once in a run.
@@ -146,11 +148,11 @@ async def run(brief: str, brand: BrandContext) -> str:
         # same reviewer, and asking them three questions at once is worse than
         # asking three times.
         decisions = [
-            await to_resume_decision(action, submitted, revisions)
+            await to_resume_decision(brand, action, submitted, revisions)
             for action in hitl_request["action_requests"]
         ]
         response = await agent.ainvoke(
-            Command(resume={"decisions": decisions}), RUN_CONFIG
+            Command(resume={"decisions": decisions}), run_config
         )
 
     return response["messages"][-1].content
@@ -171,23 +173,31 @@ def brand_from_argv() -> BrandContext:
         raise SystemExit(str(error)) from error
 
 
-async def main() -> None:
-    # Built per run, never at import: the angles carry today's date, and this
-    # process outlives a day. `recent` stays empty until app.store can say what
-    # was actually posted (FR-4) -- that is the half that stops the model
-    # rediscovering the same trivia every morning.
-    brand = brand_from_argv()
+async def serve() -> None:
+    """Prod shape: hold the socket open and let Slack start the runs."""
+    await start_listener()
+    logging.info("Listening. Mention the bot in a brand channel to start a run.")
+    try:
+        await asyncio.Event().wait()  # forever, until Ctrl+C / SIGTERM
+    finally:
+        await stop_listener()
+
+
+async def one_shot(brand: BrandContext) -> None:
+    """Dev shape: brief one brand, print the answer, exit."""
     angle = pick_angle(brand)
     logging.info("Briefing %s on angle %r", brand.slug, angle)
-
     try:
-        answer = await run(build_brief(brand, angle), brand)
-        logging.info("Printing agent's response...")
-        print(answer)
+        print(await run(build_brief(brand, angle), brand))
     finally:
-        # The socket is a task on this loop; leaving it open makes asyncio.run()
-        # tear down with the connection still live.
         await stop_listener()
+
+
+async def main() -> None:
+    if len(sys.argv) > 1:
+        await one_shot(load_brand(sys.argv[1]))
+    else:
+        await serve()
 
 
 if __name__ == "__main__":

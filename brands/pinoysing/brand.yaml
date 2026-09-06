@@ -9,7 +9,7 @@ timezone: "Asia/Manila"
 
 accounts:
   - platform: facebook # Page, via Graph API
-    page_id: "TODO"
+    page_id: "111111111111111"
     enabled: true
   - platform: x
     handle: "TODO"
@@ -19,8 +19,8 @@ accounts:
     enabled: true
 
 cadence:
-  max_per_day: 3
-  max_per_week: 12
+  max_per_day: 5
+  max_per_week: 35
 
 approval:
   required: always
@@ -29,3 +29,26 @@ approval:
 banned_terms: []
 hashtags:
   default: ["#PinoySing", "#karaoke", "#videoke", "#onlinekaraoke"]
+
+# Post graphics. Sampled from the Page's own profile picture, so the feed and
+# the avatar agree. Two colours and no third: they swap roles between templates,
+# and a third would leave a decision to make on every post.
+theme:
+  ground: "#3A3A38" # charcoal
+  accent: "#F5D24E" # the wordmark yellow
+  muted: "#CFCBBD" # subtitle grey, legible on ground
+  wordmark: "PinoySing"
+  tagline: "online karaoke"
+  # Which look each brief angle gets. The template is a property of the angle,
+  # so a new look is a line here rather than a code change.
+  templates:
+    default: marquee
+    trivia_music: spotlight
+    fun_nonmusic: spotlight
+    karaoke_culture: spotlight
+    app_feature: stage
+    trending_music: marquee
+    song_spotlight: marquee
+    artist_spotlight: marquee
+    okasyon: marquee
+    duet_night: marquee
