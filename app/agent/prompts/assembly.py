@@ -56,6 +56,7 @@ def _brand_block(brand: BrandContext) -> str:
         display_name=brand.display_name,
         voice=brand.voice or _NO_VOICE,
         accounts=_accounts(brand),
+        graphic=_graphic(brand),
         banned_terms=_banned_terms(brand.banned_terms),
         disclaimers=_disclaimers(brand.required_disclaimers),
         hashtags=_hashtags(brand.hashtags),
@@ -77,6 +78,27 @@ def _accounts(brand: BrandContext) -> str:
     if not enabled:
         return "None enabled. Do not draft for any platform."
     return "\n".join(f"- {account.platform}" for account in enabled)
+
+
+def _graphic(brand: BrandContext) -> str:
+    """Whether this brand has a card, in the brand block rather than the prefix.
+
+    The *rules* for writing a hook are the same everywhere and live in the
+    cached prefix; whether there is a card to write one for is a property of the
+    brand, and putting it here is what stops the model offering `pinoysing` a
+    graphic in `derekt`'s channel. Same argument as `_accounts`: an option the
+    brand does not have is an option the model never sees.
+    """
+    if brand.theme is None:
+        return (
+            "This brand has no post card. Leave `hook` empty — its posts are "
+            "text only, and a hook would be discarded."
+        )
+    return (
+        "This brand posts a rendered card. Include `hook` with every submission "
+        "unless the post genuinely works better as plain text. The look is "
+        "already decided; write the words."
+    )
 
 
 def _hashtags(tags: tuple[str, ...]) -> str:

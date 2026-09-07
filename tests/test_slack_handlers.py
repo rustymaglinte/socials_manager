@@ -9,11 +9,13 @@ modal, and waking the waiter there would approve a draft nobody finished editing
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from app.transports.slack_approval import blocks, handlers
 from app.transports.slack_approval.pending import PendingRegistry
+from tests.conftest import make_brand
 
 
 class FakeClient:
@@ -22,12 +24,16 @@ class FakeClient:
     def __init__(self) -> None:
         self.updates: list[dict] = []
         self.views: list[dict] = []
+        self.posts: list[dict] = []
 
     async def chat_update(self, **kwargs) -> None:
         self.updates.append(kwargs)
 
     async def views_open(self, **kwargs) -> None:
         self.views.append(kwargs)
+
+    async def chat_postMessage(self, **kwargs) -> None:
+        self.posts.append(kwargs)
 
     @property
     def view(self) -> dict:
@@ -38,6 +44,11 @@ class FakeClient:
     def update(self) -> dict:
         assert len(self.updates) == 1, f"expected one update, got {len(self.updates)}"
         return self.updates[0]
+
+    @property
+    def post(self) -> dict:
+        assert len(self.posts) == 1, f"expected one message, got {len(self.posts)}"
+        return self.posts[0]
 
 
 async def ack() -> None:
@@ -270,3 +281,97 @@ async def test_a_rejection_after_expiry_keeps_the_draft_it_can_still_see(
     blocks_out = slack.update["blocks"]
     assert handlers.EXPIRED_SUFFIX in header_of(blocks_out)
     assert "`unknown` · `draft`" in blocks_out[2]["elements"][0]["text"]
+
+
+# --- a run that fell over ------------------------------------------------------
+#
+# `_brief_run` is a fire-and-forget task, so an exception in it has nowhere to
+# go. It used to go to the log and stop there, which meant a run that died
+# before posting its first draft looked exactly like a run nobody started. That
+# matters more now that `run` opens a database transaction before it says
+# anything in Slack.
+
+
+@pytest.fixture
+def brief_run(monkeypatch, slack):
+    """Drive `_brief_run` with a stubbed agent run and a recording Slack app.
+
+    `handlers.app` is replaced wholesale rather than having its client patched:
+    the module-level Bolt app is what `_report_failure` posts through, and it is
+    the one path in this file that does not take a client as an argument.
+    """
+    monkeypatch.setenv("SLACK_DEREKT_CHANNEL_ID", "C0DEREKT")
+    monkeypatch.setattr(handlers, "app", SimpleNamespace(client=slack))
+    # The brief itself is not what is under test, and building a real one needs
+    # a brand with a brief catalog on disk.
+    monkeypatch.setattr(handlers, "pick_angle", lambda brand: "trivia")
+    monkeypatch.setattr(handlers, "build_brief", lambda brand, angle: "a brief")
+
+    async def drive(outcome) -> None:
+        async def fake_run(brief, brand, angle=None):
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        # Patched on app.main itself, because `_brief_run` imports `run` from
+        # there at call time. That this works at all is the import cycle staying
+        # broken -- a top-level `from app.main import run` could not be reached.
+        monkeypatch.setattr("app.main.run", fake_run)
+        await handlers._brief_run(make_brand())
+
+    return drive
+
+
+async def test_a_failed_run_is_reported_in_the_channel(brief_run, slack):
+    await brief_run(RuntimeError("connection refused"))
+
+    post = slack.post
+    assert post["channel"] == "C0DEREKT"
+    assert "RuntimeError: connection refused" in post["text"]
+    assert "nothing new was drafted" in post["text"]
+    # The non-obvious half: a crash here does not un-queue an approved post.
+    assert "still queued" in post["text"]
+
+
+async def test_a_run_that_worked_says_nothing_extra(brief_run, slack):
+    """The agent's own closing message is the reply; this must not add to it."""
+    await brief_run("the agent's closing message")
+    assert slack.posts == []
+
+
+async def test_a_huge_error_is_trimmed_rather_than_dumped_into_the_channel(
+    brief_run, slack
+):
+    """A wall of traceback buries the sentence that matters."""
+    await brief_run(RuntimeError("x" * 5000))
+
+    assert len(slack.post["text"]) < 2 * handlers.ERROR_MAX_CHARS
+    assert slack.post["text"].count("x") == handlers.ERROR_MAX_CHARS - len(
+        "RuntimeError: "
+    )
+
+
+async def test_slack_being_the_thing_that_broke_is_not_fatal(
+    brief_run, slack, monkeypatch
+):
+    """If Slack is down, this cannot report anything -- but it must not raise
+    over the top of the traceback that was already logged."""
+
+    async def refuse(**kwargs):
+        raise RuntimeError("slack is down")
+
+    monkeypatch.setattr(slack, "chat_postMessage", refuse)
+
+    await brief_run(RuntimeError("the database is down"))
+    assert slack.posts == []
+
+
+async def test_a_channel_with_no_brand_binding_does_not_mask_the_real_failure(
+    brief_run, slack, monkeypatch
+):
+    """`channel_for` raises when the id is missing from .env. That is a second
+    misconfiguration, and it must not turn into an exception escaping the task."""
+    monkeypatch.delenv("SLACK_DEREKT_CHANNEL_ID")
+
+    await brief_run(RuntimeError("the database is down"))
+    assert slack.posts == []

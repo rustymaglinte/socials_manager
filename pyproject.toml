@@ -64,7 +64,11 @@ name = "Layered architecture"
 type = "layers"
 layers = [
     "app.api | app.transports",
-    "app.agent | app.workers",
+    # app.graphics sits beside them rather than below: it is the brand-aware
+    # caller app.render refuses to be, exactly as app.credentials is for
+    # app.platforms. Siblings on a layer cannot import each other, which is
+    # what keeps the publisher from acquiring a renderer by accident (C-4).
+    "app.agent | app.workers | app.graphics",
     "app.llm | app.platforms | app.credentials | app.render",
     "app.store",
     "app.domain",
@@ -107,7 +111,7 @@ forbidden_modules = ["langchain", "langgraph", "anthropic", "app.agent"]
 name = "Provider SDKs are confined to app.llm"
 type = "forbidden"
 source_modules = [
-    "app.agent", "app.domain", "app.workers",
+    "app.agent", "app.domain", "app.workers", "app.graphics",
     "app.api", "app.transports", "app.platforms", "app.store",
 ]
 forbidden_modules = [

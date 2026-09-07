@@ -159,8 +159,8 @@ def test_revisions_form_one_chain():
 
 @pytest.mark.parametrize(
     "table",
-    ["brands", "drafts", "post_variants", "approvals", "scheduled_posts",
-     "post_metrics", "post_engagements"],
+    ["brands", "drafts", "post_variants", "post_media", "approvals",
+     "scheduled_posts", "post_metrics", "post_engagements"],
 )
 def test_the_expected_tables_are_created(table):
     """Names the tables outright, so a rename is a deliberate edit here rather

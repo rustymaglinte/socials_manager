@@ -223,9 +223,16 @@ class PostVariant(Base):
     """One platform's version of a draft.
 
     The unique constraint on (draft_id, platform) is the structural form of a
-    rule `app.main` currently keeps in a Python set: one brief produces one post
-    per platform. There it is a guard the agent can be talked past across
+    rule `app.main` used to keep in a Python set: one brief produces one post
+    per platform. There it was a guard the agent could be talked past across
     processes; here it is an integrity error.
+
+    Which is why a revision is an update and not an insert -- see
+    `app.store.repositories.drafts.record_variant`. FR-11 sends a rejected draft
+    back for a rewrite, and the rewrite is these same words replaced, so the
+    constraint bounds the run without standing in the way of the loop. What
+    stops an *approved* platform being submitted twice is the constraint plus a
+    query for its verdict, not the constraint alone.
     """
 
     __tablename__ = "post_variants"
@@ -258,6 +265,65 @@ class PostVariant(Base):
 
     def __repr__(self) -> str:
         return f"<PostVariant {self.id} {self.platform}>"
+
+
+class PostMedia(Base):
+    """The rendered graphic for one variant, as the exact bytes a human approved.
+
+    Bytes in a column, not a path on disk, and that is a deployment fact rather
+    than a preference: the agent and the publisher are separate processes (D2)
+    and on Railway they are separate services with ephemeral filesystems and
+    volumes that cannot be mounted twice. A path would be written by one service
+    and read by another that cannot see it -- and would not survive a redeploy
+    even if they were the same one. Postgres is already the durable plane both
+    of them share.
+
+    Stored rather than re-rendered at publish time, for the reason
+    `Approval.approved_body` is snapshotted rather than referenced: what goes out
+    has to be what somebody said yes to. A post approved today and published
+    tomorrow must not pick up an edit to `post.html` or to the brand's palette
+    made in between. It also keeps Chromium out of the publisher's image, which
+    is a few hundred megabytes the worker has no other reason to carry.
+
+    A separate table rather than a column on `post_variants` so the blob is
+    touched only by the two queries that want it: the claim query lists its
+    columns explicitly, and nothing scanning variants drags a megabyte per row
+    behind it.
+
+    What the graphic *says* is not here -- the hook, the sub and the template
+    live in `PostVariant.media`, which is the column that exists to record what
+    should be attached. This table holds the attachment itself.
+    """
+
+    __tablename__ = "post_media"
+    __table_args__ = (
+        # One graphic per variant. A revision after a rejection replaces the
+        # card rather than accumulating a second one beside it, exactly as the
+        # revision replaces the variant's words.
+        sa.UniqueConstraint("variant_id", name="uq_media_variant"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    brand_slug: Mapped[str] = _brand_slug()
+    variant_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("post_variants.id", ondelete="CASCADE"), nullable=False
+    )
+
+    image: Mapped[bytes] = mapped_column(sa.LargeBinary, nullable=False)
+    # Whatever the renderer produced. A column rather than an assumption, so a
+    # later template that emits something other than PNG does not need the
+    # upload path to guess.
+    content_type: Mapped[str] = mapped_column(
+        sa.String(64), nullable=False, default="image/png"
+    )
+    # Of `image`. Cheap to compute, and it is what lets a log line or a support
+    # question establish that the bytes on the Page are the bytes in the review.
+    sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+
+    created_at: Mapped[datetime] = _created_at()
+
+    def __repr__(self) -> str:
+        return f"<PostMedia {self.variant_id} {self.content_type} {len(self.image or b'')}b>"
 
 
 class Approval(Base):

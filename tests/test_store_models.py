@@ -28,6 +28,7 @@ from app.store import (
     Brand,
     Draft,
     PostEngagement,
+    PostMedia,
     PostMetric,
     PostVariant,
     ScheduledPost,
@@ -40,6 +41,7 @@ from app.store import (
 SCOPED_TABLES = [
     Draft,
     PostVariant,
+    PostMedia,
     Approval,
     ScheduledPost,
     PostMetric,

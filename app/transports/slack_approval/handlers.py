@@ -15,16 +15,19 @@ waiter's wake-up need no cross-thread handoff.
 """
 
 import asyncio
-from asyncio.log import logger
 import json
+from asyncio.log import logger
 
 from app.agent.brief import build_brief, pick_angle
 from app.domain.brand.context import BrandContext
 from app.transports.slack_approval import blocks
-from app.transports.slack_approval.client import app, update_message
+from app.transports.slack_approval.client import (
+    app,
+    brand_for_channel_id,
+    channel_for,
+    update_message,
+)
 from app.transports.slack_approval.pending import registry
-from app.main import run
-from app.transports.slack_approval.client import brand_for_channel_id
 
 EXPIRED_SUFFIX = "  _(request already expired)_"
 
@@ -197,12 +200,68 @@ async def on_edit_submit(ack, body, view, client):
     )
 
 
-async def _brief_run(brand: BrandContext) -> None:
+# How much of a failure goes into the channel. Enough to tell a missing table
+# from a refused connection from an expired model key, and no more -- the
+# traceback is in the log, and a wall of it in Slack buries the sentence that
+# matters ("nothing was posted").
+ERROR_MAX_CHARS = 300
+
+
+async def _report_failure(brand: BrandContext, error: Exception) -> None:
+    """Tell the channel the run died. Nothing else will.
+
+    `_brief_run` is a fire-and-forget task, so its exception has nowhere to
+    propagate to: without this, a run that fell over is indistinguishable in
+    Slack from one that nobody started. The operator is looking at the channel,
+    not at the bot's log -- and since `run` now writes to the database before it
+    writes anything to Slack, the most likely failure is one that happens before
+    a single draft appears.
+
+    Says explicitly that approved posts are unaffected, because that is the
+    non-obvious part and it is the whole point of D2: the publisher is a
+    separate process, and a post that already cleared review is already queued
+    in a row this crash cannot touch.
+
+    Never raises. If Slack is what broke, this cannot work either, and letting
+    it throw would replace a useful traceback in the log with a useless one.
+    """
+    detail = f"{type(error).__name__}: {error}".strip()
+    if len(detail) > ERROR_MAX_CHARS:
+        detail = detail[:ERROR_MAX_CHARS] + "..."
+
     try:
-        answer = await run(build_brief(brand, pick_angle(brand)), brand)
+        await app.client.chat_postMessage(
+            channel=channel_for(brand.slug),
+            text=(
+                f":warning: The *{brand.slug}* run stopped with an error, and "
+                f"nothing new was drafted.\n```{detail}```\n"
+                f"Anything already approved is still queued -- the publisher is "
+                f"a separate process. The full traceback is in the bot's log."
+            ),
+        )
+    except Exception:  # noqa: BLE001 -- see the docstring; never fatal
+        logger.exception("Could not tell %s that its run failed", brand.slug)
+
+
+async def _brief_run(brand: BrandContext) -> None:
+    # Imported here, not at module scope. `app.main` imports this package to
+    # reach `request_approval`, so a top-level import would close the loop --
+    # and it closes in the one direction that breaks, since `run` is defined
+    # further down app.main than the import that pulls this module in. Deferring
+    # it costs one dictionary lookup per mention and makes `app.main` importable
+    # by something other than `-m`, which is what a test needs.
+    from app.main import run
+
+    try:
+        # The angle is named rather than inlined because it is stored on the
+        # draft: it decides the graphic's template at publish time, and it is
+        # the dimension "which kinds of post work" (FR-4) groups by.
+        angle = pick_angle(brand)
+        answer = await run(build_brief(brand, angle), brand, angle=angle)
         logger.info("Run for %s finished: %s", brand.slug, answer)
-    except Exception:
+    except Exception as error:
         logger.exception("Run for %s failed", brand.slug)
+        await _report_failure(brand, error)
 
 
 @app.event("app_mention")

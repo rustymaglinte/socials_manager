@@ -30,7 +30,7 @@ from app.domain.states import (
     Verdict,
     advance_schedule,
 )
-from app.store.models import Approval, ScheduledPost
+from app.store.models import Approval, Draft, PostMedia, PostVariant, ScheduledPost
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,12 @@ class DuePost:
     `body` comes from the *approval*, never from the variant -- an `edited`
     verdict replaced the text, and a variant edited again afterwards must not
     inherit the approval that was given for what it used to say.
+
+    `image` is the graphic as approved, or None for a text post. Carried as
+    bytes rather than as something to fetch later for the same reason `body` is
+    a string here: by the time the publisher has this, it is out of any
+    transaction, and a lazy load would be a database round trip in the middle
+    of a platform call.
     """
 
     id: uuid.UUID
@@ -62,6 +68,7 @@ class DuePost:
     platform: str
     body: str
     attempts: int
+    image: bytes | None = None
 
 
 async def schedule_variant(
@@ -98,6 +105,29 @@ async def schedule_variant(
     session.add(post)
     await session.flush()
     return post
+
+
+async def scheduled_for_thread(
+    session: AsyncSession, *, thread_id: str, platform: str
+) -> ScheduledPost | None:
+    """What one conversation queued for one platform, newest first.
+
+    The only join in this module, and it exists for `submit_for_approval`: the
+    tool runs after the gate has already written the rows, so what it has to
+    report is a fact about the database rather than a sentence it composed. It
+    knows the LangGraph thread and the platform, and `Draft.thread_id` is what
+    turns those into a row.
+    """
+    return (
+        await session.scalars(
+            select(ScheduledPost)
+            .join(PostVariant, PostVariant.id == ScheduledPost.variant_id)
+            .join(Draft, Draft.id == PostVariant.draft_id)
+            .where(Draft.thread_id == thread_id, ScheduledPost.platform == platform)
+            .order_by(ScheduledPost.created_at.desc())
+            .limit(1)
+        )
+    ).first()
 
 
 async def claim_due(
@@ -153,6 +183,7 @@ async def claim_due(
                 ScheduledPost.brand_slug,
                 ScheduledPost.platform,
                 ScheduledPost.approval_id,
+                ScheduledPost.variant_id,
                 ScheduledPost.attempts,
             )
         )
@@ -173,6 +204,21 @@ async def claim_due(
         ).all()
     }
 
+    # The graphic, likewise in one go. Most batches carry none at all -- a text
+    # post has no row here -- so this is a small query that usually returns
+    # nothing, rather than a join that would drag a megabyte per row through
+    # the claim above whether or not anyone wanted it.
+    images: dict[uuid.UUID, bytes] = {
+        row.variant_id: row.image
+        for row in (
+            await session.execute(
+                select(PostMedia.variant_id, PostMedia.image).where(
+                    PostMedia.variant_id.in_([row.variant_id for row in claimed])
+                )
+            )
+        ).all()
+    }
+
     posts = [
         DuePost(
             id=row.id,
@@ -180,6 +226,7 @@ async def claim_due(
             platform=row.platform,
             body=bodies.get(row.approval_id) or "",
             attempts=row.attempts,
+            image=images.get(row.variant_id),
         )
         for row in claimed
     ]

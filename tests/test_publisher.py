@@ -82,17 +82,60 @@ async def test_a_platform_with_no_adapter_is_dead_lettered(settled):
     assert "tiktok" in settled[0]["message"]
 
 
-async def test_an_empty_approved_body_is_refused_rather_than_posted(settled):
+async def test_an_empty_post_with_nothing_to_show_is_refused(settled):
     """No retry will conjure the words, and an empty post is worse than none."""
     assert await run(due(body="   ")) is False
     assert settled[0]["retryable"] is False
-    assert "empty" in settled[0]["message"]
+    assert "neither text nor a graphic" in settled[0]["message"]
+
+
+async def test_an_empty_caption_is_fine_when_a_graphic_carries_the_post(
+    settled, monkeypatch
+):
+    """A card can be the whole post, which is why the adapter's /photos path
+    checks the image for emptiness rather than the message."""
+    sent = {}
+
+    async def ok(post, client):
+        sent["image"] = post.image
+        sent["message"] = post.body
+        return PublishedPost(id="67890_1", page_id="67890", published=True)
+
+    assert await run(due(body="", image=b"PNG"), ok, monkeypatch=monkeypatch) is True
+    assert sent == {"image": b"PNG", "message": ""}
+    assert settled[0]["outcome"] == "published"
+
+
+async def test_a_post_with_a_graphic_carries_the_approved_bytes_to_the_adapter(
+    settled, monkeypatch
+):
+    """Carried through the queue, never re-rendered: what uploads has to be the
+    image the reviewer was shown (C-1), and the worker has no renderer anyway."""
+    seen = {}
+
+    async def ok(post, client):
+        seen["image"] = post.image
+        return PublishedPost(id="67890_2", page_id="67890", published=True)
+
+    assert await run(due(image=b"\x89PNG-approved"), ok, monkeypatch=monkeypatch) is True
+    assert seen["image"] == b"\x89PNG-approved"
+
+
+async def test_a_text_post_reaches_the_adapter_with_no_image(settled, monkeypatch):
+    seen = {}
+
+    async def ok(post, client):
+        seen["image"] = post.image
+        return PublishedPost(id="67890_3", page_id="67890", published=True)
+
+    assert await run(due(), ok, monkeypatch=monkeypatch) is True
+    assert seen["image"] is None
 
 
 async def test_a_missing_token_is_not_weather(settled, monkeypatch):
     """An operator has to fix this; retrying only delays them finding out."""
 
-    async def raise_missing(body, brand_slug, client):
+    async def raise_missing(post, client):
         raise CredentialsMissing("Set FB_PAGE_TOKEN_DEREKT in .env")
 
     assert await run(due(), raise_missing, monkeypatch=monkeypatch) is False
@@ -101,7 +144,7 @@ async def test_a_missing_token_is_not_weather(settled, monkeypatch):
 
 
 async def test_a_brand_directory_that_vanished_is_not_retried(settled, monkeypatch):
-    async def raise_missing(body, brand_slug, client):
+    async def raise_missing(post, client):
         raise BrandNotFound("No brand.yaml at brands/derekt/brand.yaml")
 
     assert await run(due(), raise_missing, monkeypatch=monkeypatch) is False
@@ -115,7 +158,7 @@ async def test_the_adapters_own_classification_is_trusted(settled, monkeypatch):
     """The adapter reads the platform's error codes; the publisher does not
     second-guess which of them are worth another attempt."""
 
-    async def rate_limited(body, brand_slug, client):
+    async def rate_limited(post, client):
         raise PublishFailed("rate limited", code=32, retryable=True)
 
     assert await run(due(), rate_limited, monkeypatch=monkeypatch) is False
@@ -123,7 +166,7 @@ async def test_the_adapters_own_classification_is_trusted(settled, monkeypatch):
 
 
 async def test_a_refused_post_is_not_retried(settled, monkeypatch):
-    async def refused(body, brand_slug, client):
+    async def refused(post, client):
         raise PublishFailed("token expired", code=190, retryable=False)
 
     assert await run(due(), refused, monkeypatch=monkeypatch) is False
@@ -133,7 +176,7 @@ async def test_a_refused_post_is_not_retried(settled, monkeypatch):
 async def test_the_trace_id_survives_into_the_record(settled, monkeypatch):
     """fbtrace_id is the first thing Meta support asks for."""
 
-    async def failed(body, brand_slug, client):
+    async def failed(post, client):
         raise PublishFailed("nope", trace_id="AbC123", retryable=True)
 
     await run(due(), failed, monkeypatch=monkeypatch)
@@ -144,7 +187,7 @@ async def test_an_unexpected_exception_still_settles_the_row(settled, monkeypatc
     """The broad except in publish_one earns its keep here: a row left in
     PUBLISHING waits fifteen minutes for the stale sweep."""
 
-    async def explode(body, brand_slug, client):
+    async def explode(post, client):
         raise ZeroDivisionError("something nobody predicted")
 
     assert await run(due(), explode, monkeypatch=monkeypatch) is False
@@ -157,7 +200,7 @@ async def test_an_unexpected_exception_still_settles_the_row(settled, monkeypatc
 
 
 async def test_a_published_post_records_its_platform_id(settled, monkeypatch):
-    async def ok(body, brand_slug, client):
+    async def ok(post, client):
         return PublishedPost(id="67890_111", page_id="67890", published=True)
 
     assert await run(due(), ok, monkeypatch=monkeypatch) is True
@@ -169,7 +212,7 @@ async def test_a_published_post_records_its_platform_id(settled, monkeypatch):
 async def test_an_unpublished_post_records_no_url(settled, monkeypatch):
     """A draft on the Page has an id but no public page; a permalink would 404."""
 
-    async def draft(body, brand_slug, client):
+    async def draft(post, client):
         return PublishedPost(id="67890_111", page_id="67890", published=False)
 
     await run(due(), draft, monkeypatch=monkeypatch)

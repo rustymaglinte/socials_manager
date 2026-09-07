@@ -37,11 +37,23 @@ media_cache/
 logs/
 *.log
 
+# Scratch renders: `fb_publish.py --out` writes a PNG wherever you point it.
+# Point it in here so eyeballing a card before posting never stages an artifact.
+/out/
+
+# ---- Operational state ---------------------------------------------------
+# publisher.py halts on the mere existence of this file (default name; the
+# PUBLISHING_KILL_SWITCH env var overrides it). It is a local, deliberately
+# out-of-band lever -- committing one would halt publishing everywhere the
+# repo is deployed, and it must never arrive by `git pull`.
+PAUSE_PUBLISHING
+
 # ---- Tooling caches ------------------------------------------------------
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .import_linter_cache/
+.grimp_cache/
 .coverage
 htmlcov/
 

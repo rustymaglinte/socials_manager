@@ -37,6 +37,7 @@ from app.credentials import CredentialsMissing, credentials_for
 from app.domain.brand import BrandNotFound, all_brands, load_brand
 from app.platforms.facebook import PublishedPost, PublishFailed
 from app.platforms.facebook import publish as facebook_publish
+from app.platforms.facebook import publish_photo as facebook_publish_photo
 from app.store.engine import dispose, transaction
 from app.store.repositories import (
     claim_due,
@@ -79,28 +80,42 @@ def worker_name() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
-async def _publish_facebook(
-    body: str, brand_slug: str, client: httpx.AsyncClient
-) -> PublishedPost:
-    """Resolve this brand's Page and post to it.
+async def _publish_facebook(post, client: httpx.AsyncClient) -> PublishedPost:
+    """Resolve this brand's Page and post to it, with its graphic if it has one.
 
     The brand is loaded here, at the last moment, rather than carried through
     the queue: brand.yaml is the source of truth for a Page id, and a post
     approved yesterday should go to the Page the brand names today.
+
+    The *image*, by contrast, is carried through the queue rather than made
+    here, and that asymmetry is deliberate. A Page id is configuration and
+    should be current; a graphic is the artefact a human approved and must be
+    the one they saw (C-1). Re-rendering it would also put Chromium in this
+    process, which is a few hundred megabytes the worker has no other use for.
+
+    Two endpoints, not a flag: /photos takes multipart and calls the text
+    `caption`, so the adapter keeps them as separate functions and so does this.
     """
-    brand = load_brand(brand_slug)
+    brand = load_brand(post.brand_slug)
     page = credentials_for(brand, "facebook")
+
+    if post.image:
+        return await facebook_publish_photo(
+            page_id=page.external_id,
+            access_token=page.token,
+            image=post.image,
+            message=post.body,
+            client=client,
+        )
+
     return await facebook_publish(
         page_id=page.external_id,
         access_token=page.token,
-        message=body,
+        message=post.body,
         client=client,
     )
 
 
-# Text posts only for now. The image path (`publish_photo`, fed by app.render)
-# needs the variant's media and the brand's theme carried through the queue,
-# which is the media pipeline SPECS Q5 has not settled yet.
 _PUBLISHERS = {"facebook": _publish_facebook}
 
 
@@ -128,18 +143,22 @@ async def publish_one(post, client: httpx.AsyncClient) -> bool:
         )
         return False
 
-    if not post.body.strip():
-        # The approval carried no text. Refusing beats publishing an empty post,
-        # and no retry will conjure the words.
+    if not post.body.strip() and not post.image:
+        # The approval carried neither words nor a graphic. Refusing beats
+        # publishing an empty post, and no retry will conjure either.
+        #
+        # An empty caption *with* an image is allowed on purpose: a card can
+        # carry the whole post, which is why the adapter's /photos path checks
+        # the image for emptiness rather than the message.
         await _settle_failure(
             post.id,
-            "The approved text is empty; nothing to publish",
+            "The approved post has neither text nor a graphic; nothing to publish",
             retryable=False,
         )
         return False
 
     try:
-        published = await publisher(post.body, post.brand_slug, client)
+        published = await publisher(post, client)
     except (CredentialsMissing, BrandNotFound) as error:
         # Configuration, not weather. Retrying cannot fix a missing token or a
         # brand directory that is not there; an operator has to.

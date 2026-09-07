@@ -13,6 +13,8 @@ import re
 
 from app.agent.prompts.assembly import Segment, build_system_prompt, render
 from app.agent.prompts.system_prompt import SYSTEM_PROMPT
+from app.domain.brand.context import PostTheme
+from app.render.post_card import MAX_HOOK_CHARS
 from tests.conftest import make_brand
 
 
@@ -70,7 +72,10 @@ def test_a_brand_with_no_voice_gets_the_neutral_instruction_not_an_empty_section
 def test_only_enabled_platforms_are_offered():
     """The model never sees a platform it may not target -- that is SPECS 2.1."""
     block = brand_block(make_brand())
-    accounts = block.split("## Accounts you may target")[1].split("## Hard rules")[0]
+    # Sliced to the account list alone, not to everything before "## Hard
+    # rules": the assertion below is a bare letter, so any prose that lands
+    # between the sections would fail it for containing an "x".
+    accounts = block.split("## Accounts you may target")[1].split("## Post graphic")[0]
 
     assert "- linkedin" in accounts
     assert "- facebook" in accounts
@@ -161,3 +166,33 @@ def test_one_brands_prompt_contains_nothing_of_the_others():
     assert "guaranteed returns" not in block
     assert "#trading" not in block
     assert "facebook" not in block
+
+
+def test_a_brand_with_a_card_is_told_to_write_one():
+    """Whether there is a card is a property of the brand, so it belongs in the
+    brand block -- the same argument as the account list."""
+    themed = make_brand(
+        theme=PostTheme(
+            ground="#3A3A38",
+            accent="#F5D24E",
+            muted="#CFCBBD",
+            wordmark="PinoySing",
+            tagline="online karaoke",
+        )
+    )
+    assert "This brand posts a rendered card" in brand_block(themed)
+
+
+def test_a_brand_with_no_card_is_told_to_leave_the_hook_empty():
+    """derekt declares no theme. Offering it a graphic would cost a round trip
+    to produce copy that is then discarded."""
+    block = brand_block(make_brand(theme=None))
+
+    assert "no post card" in block
+    assert "text only" in block
+
+
+def test_the_hook_limit_the_model_is_told_is_the_one_the_renderer_enforces():
+    """A prompt promising a different number would produce a rejection the model
+    could not have avoided, on every post."""
+    assert f"at most {MAX_HOOK_CHARS} characters" in SYSTEM_PROMPT

@@ -18,17 +18,24 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
 from app.config import ConfigurationError, settings
-from app.domain.states import ScheduleState, Verdict
-from app.store import Approval, Brand, Draft, PostVariant, ScheduledPost
+from app.domain.states import DraftState, ScheduleState, Verdict
+from app.store import Approval, Brand, Draft, PostMedia, PostVariant, ScheduledPost
 from app.store.engine import dispose, engine, session_factory
 from app.store.repositories import (
+    approving_verdict,
+    attach_card,
     claim_due,
     known_slugs,
     mark_failed,
     mark_published,
+    open_draft,
+    record_variant,
+    record_verdict,
     release_stale_claims,
     schedule_variant,
+    scheduled_for_thread,
     sync_brands,
+    variant_for,
 )
 
 
@@ -401,3 +408,315 @@ async def test_settling_a_post_that_is_gone_is_an_error_not_a_silent_no_op(sessi
 
 async def test_the_engine_is_reused_across_calls():
     assert engine() is engine()
+
+
+# --- what the agent writes -------------------------------------------------
+#
+# The other end of the same loop: everything above assumes a draft, a variant
+# and an approval already exist. These are the calls that put them there, and
+# what is being checked is that the gate's memory really has moved out of
+# `app.main`'s process and into rows another process can read.
+
+THREAD = "__test_brand__-thread-1"
+
+
+@pytest.fixture
+async def draft(session):
+    await sync_brands(session, [SLUG])
+    return await open_draft(
+        session,
+        brand_slug=SLUG,
+        concept="a concept someone asked for",
+        angle="trivia_music",
+        thread_id=THREAD,
+    )
+
+
+async def _submit(session, draft, platform="facebook", body="first attempt"):
+    return await record_variant(
+        session,
+        brand_slug=SLUG,
+        draft_id=draft.id,
+        platform=platform,
+        body=body,
+    )
+
+
+async def test_a_draft_starts_inert_and_enters_review_when_submitted(session, draft):
+    assert draft.state is DraftState.DRAFT
+    assert draft.thread_id == THREAD
+
+    await _submit(session, draft)
+    assert draft.state is DraftState.PENDING_APPROVAL
+
+
+async def test_a_revision_rewrites_the_variant_rather_than_adding_one(session, draft):
+    """FR-11's rewrite loop against FR-13's one-post-per-platform rule. The
+    unique constraint on (draft_id, platform) is what makes the second
+    submission an update -- if it inserted, the rule would be a Python
+    convention again."""
+    first = await _submit(session, draft, body="first attempt")
+    await record_verdict(
+        session,
+        brand_slug=SLUG,
+        variant_id=first.id,
+        decision=Verdict.REJECTED,
+        approver="U_REVIEWER",
+        note="too long",
+    )
+    second = await _submit(session, draft, body="tightened up")
+
+    assert second.id == first.id
+    assert second.body == "tightened up"
+    assert (
+        await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(PostVariant)
+            .where(PostVariant.draft_id == draft.id)
+        )
+    ) == 1
+    # And the draft is back in review rather than stuck in REJECTED.
+    assert draft.state is DraftState.PENDING_APPROVAL
+
+
+async def test_a_second_platform_gets_its_own_variant(session, draft):
+    facebook = await _submit(session, draft, platform="facebook")
+    linkedin = await _submit(session, draft, platform="linkedin", body="for linkedin")
+    assert facebook.id != linkedin.id
+
+
+async def test_an_approved_platform_is_visible_to_the_next_process(session, draft):
+    """What replaced `app.main`'s `submitted` set. The set answered only inside
+    the process that held it; this answers from the row."""
+    variant = await _submit(session, draft)
+    assert await approving_verdict(session, variant_id=variant.id) is None
+
+    await record_verdict(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        decision=Verdict.APPROVED,
+        approver="U_REVIEWER",
+        approved_body="first attempt",
+    )
+
+    found = await approving_verdict(session, variant_id=variant.id)
+    assert found is not None
+    assert found.approver == "U_REVIEWER"
+    assert draft.state is DraftState.APPROVED
+    # And the same question, asked the way the gate asks it.
+    again = await variant_for(session, draft_id=draft.id, platform="facebook")
+    assert await approving_verdict(session, variant_id=again.id) is not None
+
+
+async def test_a_rejection_is_recorded_without_the_text_being_approved(session, draft):
+    """A rejection is evidence too, and `approved_body` must not survive it --
+    it is what the publisher sends, so it has to be text somebody said yes to."""
+    variant = await _submit(session, draft)
+    approval = await record_verdict(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        decision=Verdict.REJECTED,
+        approver="U_REVIEWER",
+        approved_body="first attempt",
+        note="wrong tone",
+    )
+    assert approval.approved_body is None
+    assert approval.note == "wrong tone"
+    assert await approving_verdict(session, variant_id=variant.id) is None
+    assert draft.state is DraftState.REJECTED
+
+
+async def test_nobody_looking_is_recorded_as_a_verdict(session, draft):
+    """`timeout` is a fact about the reviewer, not a null to interpret later."""
+    variant = await _submit(session, draft)
+    approval = await record_verdict(
+        session, brand_slug=SLUG, variant_id=variant.id, decision=Verdict.TIMEOUT
+    )
+    assert approval.decision is Verdict.TIMEOUT
+    assert approval.approver is None
+    assert await approving_verdict(session, variant_id=variant.id) is None
+
+
+async def test_an_edit_is_an_approval_and_carries_the_reviewers_words(session, draft):
+    variant = await _submit(session, draft, body="what the model wrote")
+    await record_verdict(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        decision=Verdict.EDITED,
+        approver="U_REVIEWER",
+        approved_body="what the human wrote instead",
+    )
+
+    approval = await approving_verdict(session, variant_id=variant.id)
+    assert approval.approved_body == "what the human wrote instead"
+    # The variant keeps what the model wrote; the publisher reads the approval.
+    assert variant.body == "what the model wrote"
+
+
+async def test_the_whole_loop_ends_in_a_row_the_publisher_will_claim(session, draft):
+    """Draft -> variant -> approval -> schedule, then the publisher's own claim
+    query picks it up. The join `app.main` and the worker meet at."""
+    variant = await _submit(session, draft, body="ready to go")
+    approval = await record_verdict(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        decision=Verdict.APPROVED,
+        approver="U_REVIEWER",
+        approved_body="ready to go",
+    )
+    await schedule_variant(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        approval_id=approval.id,
+        approval_decision=approval.decision,
+        platform="facebook",
+    )
+
+    claimed = await _claim(session)
+    assert len(claimed) == 1
+    assert claimed[0].body == "ready to go"
+
+
+async def test_a_queued_post_can_be_found_from_the_conversation_that_made_it(
+    session, draft
+):
+    """What `submit_for_approval` reports with. The tool knows the LangGraph
+    thread and the platform and nothing else."""
+    assert (
+        await scheduled_for_thread(session, thread_id=THREAD, platform="facebook")
+    ) is None
+
+    variant = await _submit(session, draft)
+    approval = await record_verdict(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        decision=Verdict.APPROVED,
+        approver="U_REVIEWER",
+        approved_body="first attempt",
+    )
+    post = await schedule_variant(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        approval_id=approval.id,
+        approval_decision=approval.decision,
+        platform="facebook",
+    )
+
+    found = await scheduled_for_thread(session, thread_id=THREAD, platform="facebook")
+    assert found is not None and found.id == post.id
+    # A platform this run never submitted has nothing to report.
+    assert (
+        await scheduled_for_thread(session, thread_id=THREAD, platform="linkedin")
+    ) is None
+
+
+async def test_a_verdict_on_a_variant_that_is_gone_is_an_error(session):
+    with pytest.raises(LookupError):
+        await record_verdict(
+            session,
+            brand_slug=SLUG,
+            variant_id=uuid.uuid4(),
+            decision=Verdict.APPROVED,
+        )
+
+
+async def test_a_card_is_stored_as_bytes_and_described_on_the_variant(session, draft):
+    """The split: `post_media` holds the artefact, `PostVariant.media` says what
+    it is. Bytes in Postgres because the agent and the publisher are separate
+    services that share a database and nothing else."""
+    variant = await _submit(session, draft)
+    await attach_card(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        image=b"\x89PNG-first",
+        sha256="aaa",
+        descriptor={"kind": "card", "template": "spotlight", "hook": "A hook"},
+    )
+
+    media = (
+        await session.scalars(
+            sa.select(PostMedia).where(PostMedia.variant_id == variant.id)
+        )
+    ).all()
+    assert len(media) == 1
+    assert media[0].image == b"\x89PNG-first"
+    assert media[0].content_type == "image/png"
+    assert variant.media[0]["hook"] == "A hook"
+
+
+async def test_a_second_card_replaces_the_first(session, draft):
+    """One graphic per variant, as a unique constraint: a rewrite replaces the
+    card the way it replaces the words."""
+    variant = await _submit(session, draft)
+    for image, digest, hook in (
+        (b"\x89PNG-first", "aaa", "Generic hook"),
+        (b"\x89PNG-second", "bbb", "Sharper hook"),
+    ):
+        await attach_card(
+            session,
+            brand_slug=SLUG,
+            variant_id=variant.id,
+            image=image,
+            sha256=digest,
+            descriptor={"kind": "card", "template": "spotlight", "hook": hook},
+        )
+
+    media = (
+        await session.scalars(
+            sa.select(PostMedia).where(PostMedia.variant_id == variant.id)
+        )
+    ).all()
+    assert len(media) == 1
+    assert media[0].image == b"\x89PNG-second"
+    assert variant.media[0]["hook"] == "Sharper hook"
+
+
+async def test_a_claimed_post_carries_its_approved_graphic(session, draft):
+    """What the publisher gets. Bytes come with the claim rather than being
+    fetched later: by then it is out of any transaction and mid-HTTP call."""
+    variant = await _submit(session, draft, body="ready to go")
+    await attach_card(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        image=b"\x89PNG-approved",
+        sha256="ccc",
+        descriptor={"kind": "card", "template": "marquee", "hook": "A hook"},
+    )
+    approval = await record_verdict(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        decision=Verdict.APPROVED,
+        approver="U_REVIEWER",
+        approved_body="ready to go",
+    )
+    await schedule_variant(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        approval_id=approval.id,
+        approval_decision=approval.decision,
+        platform="facebook",
+    )
+
+    (claimed,) = await _claim(session)
+    assert claimed.image == b"\x89PNG-approved"
+    assert claimed.body == "ready to go"
+
+
+async def test_a_text_post_is_claimed_with_no_image(session, variant):
+    """The common case, and the one that must not pay for the column."""
+    approval = await _approval(session, variant)
+    await _schedule(session, variant, approval)
+
+    (claimed,) = await _claim(session)
+    assert claimed.image is None
