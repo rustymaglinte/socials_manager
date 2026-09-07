@@ -124,3 +124,10 @@ asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 # Fail on an unregistered mark rather than silently skipping what it guarded.
 addopts = "--strict-markers --strict-config"
+markers = [
+    # Skipped unless DATABASE_URL is set. The claim/settle cycle is the one part
+    # of the store whose correctness is a property of Postgres -- SKIP LOCKED,
+    # partial unique indexes, a composite foreign key -- so it is tested against
+    # a real one rather than a stand-in that would agree with whatever we wrote.
+    "integration: needs a live Postgres (DATABASE_URL)",
+]
