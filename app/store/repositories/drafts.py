@@ -27,6 +27,7 @@ than being written and discovered later.
 
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy import select
@@ -39,7 +40,7 @@ from app.domain.states import (
     Verdict,
     advance_draft,
 )
-from app.store.models import Approval, Draft, PostMedia, PostVariant
+from app.store.models import Approval, Draft, PostMedia, PostVariant, ScheduledPost
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +238,131 @@ async def approving_verdict(
             .limit(1)
         )
     ).first()
+
+
+# How much of a past post is enough to recognise its topic. The list goes into
+# the brief, which is a HumanMessage rather than the cached prefix -- so every
+# entry is resent on every turn of the run and never cached. A hook or a first
+# line identifies "we did Eraserheads already" as well as the whole post does,
+# at a tenth of the tokens, which is what makes a useful number of them
+# affordable.
+TOPIC_MAX_CHARS = 80
+
+# Roughly a week at pinoysing's cadence (5/day, 35/week). Deliberately counted
+# in posts rather than days: a brand posting five times a day and one posting
+# twice a week need the same "what have I just said", not the same fortnight.
+RECENT_TOPICS = 25
+
+# Enough that a run of one angle cannot happen, small enough that it never
+# empties a nine-angle catalog. `pick_angle` takes the set of these, so five
+# consecutive drafts on one angle exclude one angle, not five.
+RECENT_ANGLES = 5
+
+# The window either read looks back over. A brand that goes quiet for a month
+# should start clean rather than dragging stale exclusions forward.
+RECENT_DAYS = 14
+
+
+def _topic(media: list[dict] | None, body: str | None) -> str:
+    """One past post, short enough to list.
+
+    The card's hook when there was one -- it is already a summary of the post,
+    written to be the six words that carry it -- and the opening of the caption
+    otherwise. Whitespace is collapsed so a multi-paragraph post contributes one
+    line to the brief rather than reshaping it.
+    """
+    hook = (media[0].get("hook") if media else None) or ""
+    text = " ".join((hook.strip() or (body or "")).split())
+    if len(text) > TOPIC_MAX_CHARS:
+        return text[:TOPIC_MAX_CHARS].rstrip() + "..."
+    return text
+
+
+async def recent_angles(
+    session: AsyncSession,
+    *,
+    brand_slug: str,
+    limit: int = RECENT_ANGLES,
+    now: datetime | None = None,
+) -> tuple[str, ...]:
+    """The angles this brand's last few briefs used, newest first.
+
+    Every draft counts, not only the approved ones -- and that is the difference
+    from `recent_topics` below. "Do not land on the same angle twice running" is
+    true whether or not the reviewer liked the post; a rejection says the writing
+    was wrong, not that the angle was already spent.
+
+    These never reach the model. They only shrink the set `pick_angle` draws
+    from, which is why the list can be short and why duplicates in it are
+    harmless -- the caller takes its set.
+    """
+    now = now or datetime.now(UTC)
+    angles = (
+        await session.scalars(
+            select(Draft.angle)
+            .where(
+                Draft.brand_slug == brand_slug,
+                Draft.angle.is_not(None),
+                Draft.created_at >= now - timedelta(days=RECENT_DAYS),
+            )
+            .order_by(Draft.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    # The WHERE already excludes them; repeating it here is for the reader and
+    # the type checker, neither of which can see into the SQL.
+    return tuple(angle for angle in angles if angle)
+
+
+async def recent_topics(
+    session: AsyncSession,
+    *,
+    brand_slug: str,
+    limit: int = RECENT_TOPICS,
+    now: datetime | None = None,
+) -> tuple[str, ...]:
+    """What this brand has actually posted lately, newest first.
+
+    Anchored on `scheduled_posts` rather than on drafts, and that is not a
+    shortcut: a row can only exist there if an *approving* verdict exists, since
+    the foreign key is composite onto (approval id, decision) and the CHECK
+    beside it admits only APPROVING_VERDICTS. So "approved" needs no predicate
+    here -- the schema already guarantees it (C-1).
+
+    Which is also the answer to why rejected drafts are absent. A reviewer who
+    rejects an Eraserheads post has said the post was wrong, not the topic;
+    excluding the topic would be inferring a judgment nobody made.
+
+    Text comes from the approval, never from the variant, for the same reason
+    the publisher reads it there: an edit replaced the words, and what the brand
+    actually said is what went out.
+    """
+    now = now or datetime.now(UTC)
+
+    rows = (
+        await session.execute(
+            select(PostVariant.media, Approval.approved_body)
+            .select_from(ScheduledPost)
+            .join(PostVariant, PostVariant.id == ScheduledPost.variant_id)
+            .join(Approval, Approval.id == ScheduledPost.approval_id)
+            .where(
+                ScheduledPost.brand_slug == brand_slug,
+                ScheduledPost.created_at >= now - timedelta(days=RECENT_DAYS),
+            )
+            .order_by(ScheduledPost.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+
+    # Deduplicated, order preserved: one concept submitted for four platforms is
+    # four rows and one topic, and listing it four times would spend the budget
+    # on repetition rather than on coverage.
+    seen: dict[str, None] = {}
+    for media, approved_body in rows:
+        topic = _topic(media, approved_body)
+        if topic:
+            seen.setdefault(topic, None)
+    return tuple(seen)
 
 
 async def record_verdict(

@@ -29,6 +29,8 @@ from app.store.repositories import (
     mark_failed,
     mark_published,
     open_draft,
+    recent_angles,
+    recent_topics,
     record_variant,
     record_verdict,
     release_stale_claims,
@@ -37,6 +39,7 @@ from app.store.repositories import (
     sync_brands,
     variant_for,
 )
+from app.store.repositories.drafts import TOPIC_MAX_CHARS
 
 
 def _database_configured() -> bool:
@@ -720,3 +723,159 @@ async def test_a_text_post_is_claimed_with_no_image(session, variant):
 
     (claimed,) = await _claim(session)
     assert claimed.image is None
+
+
+# --- what the next brief should avoid ---------------------------------------
+
+
+async def _scheduled(session, draft, platform, body, hook=None):
+    """A post that actually went into the queue, which is what `recent_topics`
+    counts. Text comes back from the approval, so the two differ on purpose."""
+    variant = await record_variant(
+        session, brand_slug=SLUG, draft_id=draft.id, platform=platform, body="as drafted"
+    )
+    if hook is not None:
+        await attach_card(
+            session,
+            brand_slug=SLUG,
+            variant_id=variant.id,
+            image=b"PNG",
+            sha256="x",
+            descriptor={"kind": "card", "template": "marquee", "hook": hook},
+        )
+    approval = await record_verdict(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        decision=Verdict.APPROVED,
+        approver="U",
+        approved_body=body,
+    )
+    return await schedule_variant(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        approval_id=approval.id,
+        approval_decision=approval.decision,
+        platform=platform,
+    )
+
+
+async def test_the_angles_just_used_are_reported_newest_first(session):
+    await sync_brands(session, [SLUG])
+    for angle in ("trivia_music", "artist_spotlight", "artist_spotlight"):
+        await open_draft(session, brand_slug=SLUG, concept="c", angle=angle)
+
+    angles = await recent_angles(session, brand_slug=SLUG)
+    assert set(angles) == {"artist_spotlight", "trivia_music"}
+    assert angles.count("artist_spotlight") == 2
+
+
+async def test_an_unapproved_draft_still_spends_its_angle(session):
+    """The difference from recent_topics: a rejection says the writing was
+    wrong, not that the angle is spent -- but it was still just used, and
+    landing on it again is the run of one angle this exists to stop."""
+    await sync_brands(session, [SLUG])
+    draft = await open_draft(
+        session, brand_slug=SLUG, concept="c", angle="artist_spotlight"
+    )
+    variant = await _submit(session, draft)
+    await record_verdict(
+        session,
+        brand_slug=SLUG,
+        variant_id=variant.id,
+        decision=Verdict.REJECTED,
+        approver="U",
+        note="flat",
+    )
+
+    assert await recent_angles(session, brand_slug=SLUG) == ("artist_spotlight",)
+
+
+async def test_a_draft_with_no_angle_is_not_reported(session):
+    """A concept typed into Slack has no angle; a None in the avoid-set would
+    exclude nothing and read as a bug at the call site."""
+    await sync_brands(session, [SLUG])
+    await open_draft(session, brand_slug=SLUG, concept="typed by hand", angle=None)
+
+    assert await recent_angles(session, brand_slug=SLUG) == ()
+
+
+async def test_only_posts_that_reached_the_queue_count_as_topics(session, draft):
+    """Anchored on scheduled_posts, so "approved" needs no predicate: the
+    composite foreign key means the row cannot exist without an approving
+    verdict."""
+    rejected = await record_variant(
+        session, brand_slug=SLUG, draft_id=draft.id, platform="x", body="never went out"
+    )
+    await record_verdict(
+        session,
+        brand_slug=SLUG,
+        variant_id=rejected.id,
+        decision=Verdict.REJECTED,
+        approver="U",
+        note="no",
+    )
+    await _scheduled(session, draft, "facebook", "Eraserheads night sa videoke")
+
+    topics = await recent_topics(session, brand_slug=SLUG)
+    assert topics == ("Eraserheads night sa videoke",)
+
+
+async def test_a_topic_is_the_hook_when_the_post_had_a_card(session, draft):
+    """The card's words are already a summary of the post, and a tenth of the
+    tokens of the caption."""
+    await _scheduled(
+        session,
+        draft,
+        "facebook",
+        "A much longer caption that nobody needs repeated in full",
+        hook="Classic E-heads sa mic!",
+    )
+
+    assert await recent_topics(session, brand_slug=SLUG) == ("Classic E-heads sa mic!",)
+
+
+async def test_a_long_caption_is_trimmed_to_one_line(session, draft):
+    await _scheduled(session, draft, "facebook", "word " * 100)
+
+    (topic,) = await recent_topics(session, brand_slug=SLUG)
+    assert len(topic) <= TOPIC_MAX_CHARS + 3
+    assert topic.endswith("...")
+    assert "\n" not in topic
+
+
+async def test_the_text_reported_is_what_was_approved_not_what_was_drafted(
+    session, draft
+):
+    """An edit replaced the words; what the brand actually said is what went
+    out, and that is what the next brief must not repeat."""
+    await _scheduled(session, draft, "facebook", "the reviewer's rewrite")
+
+    assert await recent_topics(session, brand_slug=SLUG) == ("the reviewer's rewrite",)
+
+
+async def test_one_concept_on_four_platforms_is_one_topic(session, draft):
+    """Four rows, one thing said. Listing it four times would spend the budget
+    on repetition rather than coverage."""
+    for platform in ("facebook", "x", "linkedin", "youtube"):
+        await _scheduled(session, draft, platform, "Eraserheads night sa videoke")
+
+    assert await recent_topics(session, brand_slug=SLUG) == (
+        "Eraserheads night sa videoke",
+    )
+
+
+async def test_another_brands_posts_are_never_reported(session, draft):
+    """Tenancy is a column, and this read is one a forgotten filter would leak
+    straight into another brand's prompt."""
+    await _scheduled(session, draft, "facebook", "pinoysing's topic")
+
+    assert await recent_topics(session, brand_slug="__another_brand__") == ()
+    assert await recent_angles(session, brand_slug="__another_brand__") == ()
+
+
+async def test_nothing_posted_yet_is_an_empty_list_not_an_error(session):
+    await sync_brands(session, [SLUG])
+    assert await recent_topics(session, brand_slug=SLUG) == ()
+    assert await recent_angles(session, brand_slug=SLUG) == ()

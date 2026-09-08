@@ -10,6 +10,7 @@ from langgraph.types import Command
 from uuid_utils import uuid4
 
 from app.agent.brief import build_brief, pick_angle
+from app.agent.targets import require_targets
 from app.domain import brand
 from app.domain.brand import load_brand
 from app.domain.brand.context import BrandContext, BrandNotFound
@@ -22,6 +23,8 @@ from app.store.repositories import (
     approving_verdict,
     attach_card,
     open_draft,
+    recent_angles,
+    recent_topics,
     record_variant,
     record_verdict,
     schedule_variant,
@@ -256,8 +259,51 @@ async def to_resume_decision(run: Run, action: dict, revisions: list[str]) -> di
     }
 
 
+async def brief_for(brand: BrandContext) -> tuple[str, str]:
+    """The brief this run opens with, and the angle it came from.
+
+    Where the two kinds of repetition `app.agent.brief` names get fought, and
+    they need different answers:
+
+    - **Angle repetition** is fixed by narrowing what `pick_angle` may draw
+      from. Every recent draft counts, approved or not: a rejection says the
+      writing was wrong, not that the angle is spent.
+    - **Topic repetition** is not touched by shuffling angles at all -- every
+      run searches the same web from an empty context, so "spotlight an OPM
+      artist" lands on Eraserheads every time. That needs what was actually
+      posted, which only the store knows.
+
+    `pick_angle` and `build_brief` stay pure and keep taking `recent` as a
+    parameter; the impure half is here, in the composition root, because that
+    is what the brief module's docstring asked for -- it said the lookup was a
+    parameter "because app.store does not exist yet", and now it does.
+    """
+    async with transaction() as session:
+        angles = await recent_angles(session, brand_slug=brand.slug)
+        topics = await recent_topics(session, brand_slug=brand.slug)
+
+    angle = pick_angle(brand, recent=angles)
+    logging.info(
+        "Briefing %s on angle %r (avoiding %s; %d recent topic(s))",
+        brand.slug,
+        angle,
+        ", ".join(sorted(set(angles))) or "nothing",
+        len(topics),
+    )
+    return build_brief(brand, angle, recent=topics), angle
+
+
 async def run(brief: str, brand: BrandContext, angle: str | None = None) -> str:
     """One brief, start to finish. Returns the agent's closing message."""
+    # First, because everything below it costs something and none of it can be
+    # undone by finding out later. A brand with no reachable platform used to
+    # get all the way to the model, which then asked which platform to write
+    # for -- a question that ends the run, since only a tool call can suspend
+    # it, and which nobody can answer. Raised here it is a sentence in Slack
+    # naming the line of yaml to fix.
+    targets = require_targets(brand)
+    logging.info("Targeting %s for %s", ", ".join(targets), brand.slug)
+
     # Connect before the agent runs, so the socket is live when the first click
     # lands -- and on this loop, so the listener keeps serving while we await a
     # verdict inside the gate.
@@ -348,10 +394,9 @@ async def serve() -> None:
 
 async def one_shot(brand: BrandContext) -> None:
     """Dev shape: brief one brand, print the answer, exit."""
-    angle = pick_angle(brand)
-    logging.info("Briefing %s on angle %r", brand.slug, angle)
+    brief, angle = await brief_for(brand)
     try:
-        print(await run(build_brief(brand, angle), brand, angle=angle))
+        print(await run(brief, brand, angle=angle))
     finally:
         await stop_listener()
 

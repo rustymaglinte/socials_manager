@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass
 
 from app.agent.prompts.system_prompt import BRAND_BLOCK, SYSTEM_PROMPT
+from app.agent.targets import target_platforms
 from app.domain.brand import BrandContext
 
 _NO_VOICE = (
@@ -69,15 +70,27 @@ def _brand_block(brand: BrandContext) -> str:
 
 
 def _accounts(brand: BrandContext) -> str:
-    """Only platforms, only enabled ones.
+    """Only platforms, and only ones a post could actually reach.
 
     This is what makes SPECS 2.1 real: the personal brand has no Facebook row,
     so the model never sees Facebook as an option.
+
+    It is also the answer to the question the model used to ask. `app.agent.
+    targets` decides the list, so it is complete and already settled by the time
+    the model reads it -- and it says so, because "accounts you may target" read
+    as a menu, and a menu invites a question nobody can answer.
+
+    Empty renders rather than raises: composing a prompt must not fail. The run
+    itself refuses, in `app.main.run`, via `require_targets`.
     """
-    enabled = brand.enabled_accounts
-    if not enabled:
-        return "None enabled. Do not draft for any platform."
-    return "\n".join(f"- {account.platform}" for account in enabled)
+    targets = target_platforms(brand)
+    if not targets:
+        return "None available. Do not draft for any platform."
+    return (
+        "Draft one variant for each of these, and for nothing else. The list is "
+        "complete and already decided -- do not ask which platform to write "
+        "for.\n" + "\n".join(f"- {platform}" for platform in targets)
+    )
 
 
 def _graphic(brand: BrandContext) -> str:

@@ -18,7 +18,6 @@ import asyncio
 import json
 from asyncio.log import logger
 
-from app.agent.brief import build_brief, pick_angle
 from app.domain.brand.context import BrandContext
 from app.transports.slack_approval import blocks
 from app.transports.slack_approval.client import (
@@ -250,14 +249,14 @@ async def _brief_run(brand: BrandContext) -> None:
     # further down app.main than the import that pulls this module in. Deferring
     # it costs one dictionary lookup per mention and makes `app.main` importable
     # by something other than `-m`, which is what a test needs.
-    from app.main import run
+    from app.main import brief_for, run
 
     try:
-        # The angle is named rather than inlined because it is stored on the
-        # draft: it decides the graphic's template at publish time, and it is
-        # the dimension "which kinds of post work" (FR-4) groups by.
-        angle = pick_angle(brand)
-        answer = await run(build_brief(brand, angle), brand, angle=angle)
+        # The angle comes back named rather than inlined because it is stored on
+        # the draft: it decides the graphic's template at publish time, and it
+        # is the dimension "which kinds of post work" (FR-4) groups by.
+        brief, angle = await brief_for(brand)
+        answer = await run(brief, brand, angle=angle)
         logger.info("Run for %s finished: %s", brand.slug, answer)
     except Exception as error:
         logger.exception("Run for %s failed", brand.slug)

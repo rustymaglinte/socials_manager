@@ -302,10 +302,6 @@ def brief_run(monkeypatch, slack):
     """
     monkeypatch.setenv("SLACK_DEREKT_CHANNEL_ID", "C0DEREKT")
     monkeypatch.setattr(handlers, "app", SimpleNamespace(client=slack))
-    # The brief itself is not what is under test, and building a real one needs
-    # a brand with a brief catalog on disk.
-    monkeypatch.setattr(handlers, "pick_angle", lambda brand: "trivia")
-    monkeypatch.setattr(handlers, "build_brief", lambda brand, angle: "a brief")
 
     async def drive(outcome) -> None:
         async def fake_run(brief, brand, angle=None):
@@ -313,10 +309,16 @@ def brief_run(monkeypatch, slack):
                 raise outcome
             return outcome
 
-        # Patched on app.main itself, because `_brief_run` imports `run` from
+        async def fake_brief_for(brand):
+            # Neither the brief nor the store read is what these tests are
+            # about, and a real one needs both a catalog on disk and a database.
+            return "a brief", "trivia"
+
+        # Patched on app.main itself, because `_brief_run` imports these from
         # there at call time. That this works at all is the import cycle staying
         # broken -- a top-level `from app.main import run` could not be reached.
         monkeypatch.setattr("app.main.run", fake_run)
+        monkeypatch.setattr("app.main.brief_for", fake_brief_for)
         await handlers._brief_run(make_brand())
 
     return drive
@@ -334,7 +336,8 @@ async def test_a_failed_run_is_reported_in_the_channel(brief_run, slack):
 
 
 async def test_a_run_that_worked_says_nothing_extra(brief_run, slack):
-    """The agent's own closing message is the reply; this must not add to it."""
+    """The drafts the run submitted are its report; the closing message goes to
+    the log and stops there."""
     await brief_run("the agent's closing message")
     assert slack.posts == []
 

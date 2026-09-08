@@ -8,10 +8,14 @@ Import from this package, not from the submodules.
 
 from app.store.repositories.brands import known_slugs, sync_brands
 from app.store.repositories.drafts import (
+    RECENT_ANGLES,
+    RECENT_TOPICS,
     approving_verdict,
     attach_card,
     next_draft_state,
     open_draft,
+    recent_angles,
+    recent_topics,
     record_variant,
     record_verdict,
     variant_for,
@@ -30,6 +34,8 @@ from app.store.repositories.schedules import (
 
 __all__ = [
     "MAX_ATTEMPTS",
+    "RECENT_ANGLES",
+    "RECENT_TOPICS",
     "DuePost",
     "approving_verdict",
     "attach_card",
@@ -40,6 +46,8 @@ __all__ = [
     "mark_published",
     "next_draft_state",
     "open_draft",
+    "recent_angles",
+    "recent_topics",
     "record_variant",
     "record_verdict",
     "release_stale_claims",

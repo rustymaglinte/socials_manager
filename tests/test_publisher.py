@@ -14,6 +14,7 @@ import pytest
 
 from app.credentials import CredentialsMissing
 from app.domain.brand import BrandNotFound
+from app.platforms import PUBLISHABLE_PLATFORMS
 from app.platforms.facebook import PublishedPost, PublishFailed
 from app.store.repositories import DuePost
 from app.store.repositories.schedules import (
@@ -259,3 +260,16 @@ def test_a_first_attempt_still_gets_a_real_wait():
     """attempts increments at claim time, so 0 should not be reachable -- but a
     negative exponent would be a zero-second retry storm if it ever were."""
     assert backoff_for(0).total_seconds() == BASE_BACKOFF_SECONDS
+
+
+# --- the adapter inventory --------------------------------------------------
+
+
+def test_the_advertised_inventory_is_the_registry_that_backs_it():
+    """`app.agent.targets` filters a run's platforms through
+    PUBLISHABLE_PLATFORMS so the model is never briefed for a platform whose
+    post would dead-letter here. That only holds while the two agree, and they
+    are declared in different modules on purpose -- the constant must not drag
+    httpx and a Graph client into a process that only wanted to know what it
+    could target."""
+    assert set(publisher._PUBLISHERS) == PUBLISHABLE_PLATFORMS

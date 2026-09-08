@@ -46,7 +46,12 @@ class Account:
 
     @property
     def configured(self) -> bool:
-        """False while the yaml still says TODO -- draftable, but not publishable."""
+        """False while the yaml still says TODO.
+
+        Nothing is drafted for such an account either (`app.agent.targets`): a
+        post nobody can publish still costs a model call and a reviewer's
+        attention before the worker dead-letters it.
+        """
         return bool(self.external_id) and self.external_id != PLACEHOLDER
 
 
@@ -123,3 +128,15 @@ class BrandContext:
     @property
     def enabled_accounts(self) -> tuple[Account, ...]:
         return tuple(account for account in self.accounts if account.enabled)
+
+    @property
+    def publishable_accounts(self) -> tuple[Account, ...]:
+        """Enabled accounts with a real id behind them.
+
+        `enabled_accounts` is which platforms the brand *wants*; this is which
+        of them a post could actually reach. The difference is a TODO left in
+        brand.yaml, which is draftable but not publishable (see `configured`).
+        """
+        return tuple(
+            account for account in self.enabled_accounts if account.configured
+        )

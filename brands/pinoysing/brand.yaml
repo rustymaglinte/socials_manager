@@ -47,8 +47,9 @@ theme:
     fun_nonmusic: spotlight
     karaoke_culture: spotlight
     app_feature: stage
-    trending_music: marquee
-    song_spotlight: marquee
+    trending_music: stage
+    song_spotlight: stage
     artist_spotlight: marquee
     okasyon: marquee
     duet_night: marquee
+    music_jokes: spotlight

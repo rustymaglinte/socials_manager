@@ -19,10 +19,12 @@ angles:
   fun_nonmusic: |
     Mag search online ng mga nakakaaliw na trending topics ngayong araw, {today}, at gumawa ng isang post.
     Okay lang kahit di related sa music or karaoke basta nakakaaliw.
+    Yun nga lang ay dapat relatable at patok sa mga Pinoy.
+    Iwasang mag-post ng mga political, religious, o controversial na topics.
 
   app_feature: |
     Pumili ng isang bagay na kayang gawin ng PinoySing at gumawa ng post tungkol
-    dito: paghahanap gamit ang title o pangalan ng artist, pag-reserve ng
+    dito: improve Youtube karaoke experience na kayang magsearch gamit ang title o pangalan ng artist, pag-reserve ng
     sunod-sunod na kanta, o ang score na lumalabas
     pagkatapos ng kanta. Libre at walang login para makakanta.
     Isa lang ang i-post; huwag listahan ng features.
@@ -42,7 +44,7 @@ angles:
   okasyon: |
     Gumawa ng post na naka-angkla sa okasyon o panahon ngayong {today} --
     birthday, fiesta, reunion, payday Friday, Pasko, bakasyon, uwian ng OFW.
-    Ikabit sa videoke: anong kanta ang bagay, sino ang unang aagaw ng mic.
+    Ikabit sa videoke: anong kanta ang bagay, sino ang unang kakanta.
 
   karaoke_culture: |
     Gumawa ng post tungkol sa mga relatable na eksena sa videoke -- yung ayaw
@@ -52,3 +54,9 @@ angles:
   duet_night: |
     Gumawa ng post tungkol sa mga kantang masarap i-duet o sabayan ng barkada.
     Yayain silang mag-reserve ng dalawa o tatlo para tuloy-tuloy ang saya.
+
+  music_jokes: |
+    Gumawa ng post tungkol sa mga patok na Pinoy jokes o memes tungkol sa music, videoke, o karaoke. 
+    Gayahin ang style ni Vice Ganda o Senyora sa pagpapatawa.
+    Iwasan ang offensive, racist o anumang hindi katanggap-tanggap na jokes.
+    Siguraduhing nakakaaliw at relatable sa mga Pinoy.

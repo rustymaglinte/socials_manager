@@ -13,7 +13,7 @@ import re
 
 from app.agent.prompts.assembly import Segment, build_system_prompt, render
 from app.agent.prompts.system_prompt import SYSTEM_PROMPT
-from app.domain.brand.context import PostTheme
+from app.domain.brand.context import PLACEHOLDER, Account, PostTheme
 from app.render.post_card import MAX_HOOK_CHARS
 from tests.conftest import make_brand
 
@@ -66,20 +66,45 @@ def test_a_brand_with_no_voice_gets_the_neutral_instruction_not_an_empty_section
     block = brand_block(make_brand(voice=None))
 
     assert "No voice profile has been written" in block
-    assert "None" not in block.split("## Accounts")[0]
+    assert "None" not in block.split("## Platforms this run targets")[0]
 
 
-def test_only_enabled_platforms_are_offered():
-    """The model never sees a platform it may not target -- that is SPECS 2.1."""
+def listed_platforms(brand) -> list[str]:
+    """The bullets under the target list, and nothing else in that section."""
+    block = brand_block(brand)
+    section = block.split("## Platforms this run targets")[1].split("## Post graphic")[0]
+    return [
+        line[2:].strip() for line in section.splitlines() if line.startswith("- ")
+    ]
+
+
+def test_only_reachable_platforms_are_offered():
+    """The model never sees a platform it may not target -- that is SPECS 2.1.
+
+    make_brand()'s three accounts fail for three different reasons, and only
+    one survives: linkedin is enabled and configured but has no publisher
+    adapter, x is disabled, facebook is the target.
+    """
+    assert listed_platforms(make_brand()) == ["facebook"]
+
+
+def test_an_account_still_on_its_todo_placeholder_is_not_a_target():
+    """Draftable but not publishable (SPECS Q2) -- and drafting for it would
+    spend a reviewer's attention on a post the worker then dead-letters."""
+    brand = make_brand(
+        accounts=(Account(platform="facebook", enabled=True, external_id=PLACEHOLDER),)
+    )
+
+    assert listed_platforms(brand) == []
+
+
+def test_the_target_list_is_stated_as_settled_not_offered_as_a_menu():
+    """The bug this is about: the model read the old list as a menu and replied
+    'Facebook, X, or YouTube?' -- which ends the run, since only a tool call can
+    suspend it and nobody can answer a plain message."""
     block = brand_block(make_brand())
-    # Sliced to the account list alone, not to everything before "## Hard
-    # rules": the assertion below is a bare letter, so any prose that lands
-    # between the sections would fail it for containing an "x".
-    accounts = block.split("## Accounts you may target")[1].split("## Post graphic")[0]
 
-    assert "- linkedin" in accounts
-    assert "- facebook" in accounts
-    assert "x" not in accounts  # present in brand.yaml, but enabled: false
+    assert "do not ask which platform to write for" in block
 
 
 def test_account_identifiers_never_reach_the_prompt():
@@ -90,10 +115,12 @@ def test_account_identifiers_never_reach_the_prompt():
     assert "67890" not in block
 
 
-def test_a_brand_with_nothing_enabled_is_told_not_to_draft():
+def test_a_brand_with_nothing_reachable_is_told_not_to_draft():
+    """Rendered rather than raised: composing a prompt must not fail. The run
+    is what refuses -- see `app.agent.targets.require_targets`."""
     block = brand_block(make_brand(accounts=()))
 
-    assert "None enabled. Do not draft for any platform." in block
+    assert "None available. Do not draft for any platform." in block
 
 
 def test_hashtags_read_as_a_pool_not_a_checklist():
