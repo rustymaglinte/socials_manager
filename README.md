@@ -93,17 +93,55 @@ DRAFT -> PENDING_APPROVAL -> APPROVED -> SCHEDULED -> PUBLISHING -> PUBLISHED
 Long-running:
 
 ```
-python -m app.transports.slack           # Socket Mode bot
-python -m app.workers.publisher          # claim + publish on schedule
-python -m app.workers.token_refresher    # LinkedIn tokens expire in 60d
+uv run python -m app.scheduler                # Socket Mode bot + draft on each brand's slots
+uv run python -m app.workers.publisher        # claim + publish on schedule
+uv run python -m app.workers.token_refresher  # LinkedIn tokens expire in 60d
 ```
+
+`uv run` rather than bare `python` because `[tool.uv] package = false` — the
+project is never installed, `app` is imported from the working directory, so
+these must be run from the repo root either way. Bare `python -m ...` is
+equivalent once `.venv` is activated; `uv run` works without activating and
+re-syncs if a dependency drifted.
+
+Two processes is the whole of it: `app.scheduler` holds the Slack socket and
+`app.workers.publisher` ships what you approve. `uv run python -m app.main` (no
+argument) is the same bot without the timer, for running mentions alone.
+
+`app.scheduler` is the cron half: it briefs a brand at each slot its `brand.yaml`
+declares, so every post is researched at the moment it is wanted rather than
+batched in advance. Slots come from `cadence` — `every_hours` and `first_slot`,
+bounded by `max_per_day` — on the brand's own clock:
+
+```yaml
+cadence:
+  max_per_day: 5      # -> 09:00, 11:00, 13:00, 15:00, 17:00 Asia/Manila
+  every_hours: 2
+  first_slot: "09:00"
+```
+
+Mentioning the bot still works at any hour — the slot schedule gates only what
+the timer starts, never what you ask for. A mention inside a slot's window does
+consume that slot, since "has this slot been drafted" is a row count rather than
+a flag, which is what keeps `max_per_day` honest.
+
+A brand without those two keys is driven by hand, so this is opt-in per brand.
+The reviewer gets most of the gap to the next slot to decide (90 minutes at a 2h
+cadence) rather than the 10 minutes a mention-driven run allows — and a slot
+missed by more than 45 minutes is skipped rather than caught up, because a
+stale post is worse than no post. `New-Item PAUSE_DRAFTING` halts drafting
+without stopping the publisher; approved posts keep going out.
+
+It lives beside `app.main` rather than under `app/workers/` because the layers
+contract makes `app.agent` and `app.workers` independent siblings — nothing in
+`workers/` may invoke the model.
 
 On demand — binds a port only for the length of one authorize dance, then exits.
 Refresh is server-to-server and needs no callback, so this runs about once per
 account per year:
 
 ```
-python -m app.api.connect <brand> <platform>   # OAuth redirect receiver
+uv run python -m app.api.connect <brand> <platform>   # OAuth redirect receiver
 ```
 
 ## Environment

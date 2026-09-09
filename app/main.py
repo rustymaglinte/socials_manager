@@ -32,7 +32,11 @@ from app.store.repositories import (
     variant_for,
 )
 from app.transports.slack_approval.approval import request_approval
-from app.transports.slack_approval.client import start_listener, stop_listener
+from app.transports.slack_approval.client import (
+    DEFAULT_TIMEOUT_SECONDS,
+    start_listener,
+    stop_listener,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -63,6 +67,11 @@ class Run:
     brand: BrandContext
     draft_id: uuid.UUID
     angle: str | None = None
+    # How long the reviewer gets before the draft times out and is dropped. Ten
+    # minutes is right for a run somebody just started by hand and is watching;
+    # it is far too short for one a cron started while they were out, which is
+    # why the scheduler raises it to most of the gap until the next slot.
+    approval_timeout: int = DEFAULT_TIMEOUT_SECONDS
 
 
 async def to_resume_decision(run: Run, action: dict, revisions: list[str]) -> dict:
@@ -162,6 +171,7 @@ async def to_resume_decision(run: Run, action: dict, revisions: list[str]) -> di
         platform=platform,
         content=content,
         image=card.image if card else None,
+        timeout_seconds=run.approval_timeout,
     )
     decision = Verdict(verdict["decision"])
     approving = decision in APPROVING_VERDICTS
@@ -293,7 +303,12 @@ async def brief_for(brand: BrandContext) -> tuple[str, str]:
     return build_brief(brand, angle, recent=topics), angle
 
 
-async def run(brief: str, brand: BrandContext, angle: str | None = None) -> str:
+async def run(
+    brief: str,
+    brand: BrandContext,
+    angle: str | None = None,
+    approval_timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> str:
     """One brief, start to finish. Returns the agent's closing message."""
     # First, because everything below it costs something and none of it can be
     # undone by finding out later. A brand with no reachable platform used to
@@ -328,7 +343,12 @@ async def run(brief: str, brand: BrandContext, angle: str | None = None) -> str:
             angle=angle,
             thread_id=thread_id,
         )
-    this_run = Run(brand=brand, draft_id=draft.id, angle=angle)
+    this_run = Run(
+        brand=brand,
+        draft_id=draft.id,
+        angle=angle,
+        approval_timeout=approval_timeout,
+    )
 
     # One slug decides both the context the model gets and the channel the draft
     # is shown in, so the two can never disagree (SPECS D3).

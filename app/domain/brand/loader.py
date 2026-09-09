@@ -11,6 +11,7 @@ Framework-free by contract: stdlib and PyYAML only (SPECS D1).
 """
 
 import logging
+from datetime import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -145,6 +146,35 @@ def _timezone(name: str, slug: str) -> str:
     return name
 
 
+def _slot_time(raw: Any, slug: str) -> time | None:
+    """`cadence.first_slot` as a clock time. Absent means "no cron for this brand".
+
+    Accepts an int as well as a string, and that is not defensiveness for its
+    own sake: unquoted `first_slot: 9:00` is sexagesimal in YAML 1.1, so PyYAML
+    hands back 540 rather than the text. Reading it as minutes-past-midnight
+    recovers exactly what was written, so the one brand.yaml that forgets its
+    quotes gets the schedule its author meant instead of a type error.
+    """
+    if raw is None or raw == "":
+        return None
+
+    if isinstance(raw, time):  # some YAML loaders resolve HH:MM:SS themselves
+        return raw
+
+    try:
+        if isinstance(raw, int):
+            hour, minute = divmod(raw, 60)
+        else:
+            hour_text, _, minute_text = str(raw).strip().partition(":")
+            hour, minute = int(hour_text), int(minute_text or 0)
+        return time(hour, minute)
+    except (TypeError, ValueError) as exc:
+        raise BrandMisconfigured(
+            f"Brand {slug!r} declares an unreadable cadence.first_slot {raw!r}; "
+            f'expected a quoted "HH:MM"'
+        ) from exc
+
+
 @lru_cache(maxsize=None)
 def load_brand(slug: str) -> BrandContext:
     """Read brands/<slug>/.
@@ -178,6 +208,8 @@ def load_brand(slug: str) -> BrandContext:
         timezone=_timezone(raw.get("timezone") or DEFAULT_TIMEZONE, slug),
         briefs=_load_briefs(directory / "briefs.yaml", slug),
         theme=_theme(raw.get("theme"), slug),
+        every_hours=int(cadence.get("every_hours", 0)),
+        first_slot=_slot_time(cadence.get("first_slot"), slug),
     )
 
 

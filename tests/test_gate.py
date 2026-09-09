@@ -142,13 +142,19 @@ def reviewer(monkeypatch):
                 }
             )
 
-    async def request_approval(*, brand, platform, content, image=None):
+    async def request_approval(
+        *, brand, platform, content, image=None, timeout_seconds=None
+    ):
         Reviewer.seen.append(
             {
                 "brand": brand,
                 "platform": platform,
                 "content": content,
                 "image": image,
+                # How long the reviewer was given. The scheduler stretches this
+                # to most of the gap before its next slot, so a draft that
+                # appears while nobody is watching is not lost in ten minutes.
+                "timeout_seconds": timeout_seconds,
             }
         )
         return Reviewer.verdicts.pop(0)

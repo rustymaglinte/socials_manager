@@ -8,10 +8,15 @@ Framework-free by contract: stdlib only here (SPECS D1).
 """
 
 from dataclasses import dataclass, field
+from datetime import time
 
 # Every brand file ships as a template full of TODOs. A TODO rendered into a
 # prompt is worse than nothing, so it is detected rather than trusted.
 PLACEHOLDER = "TODO"
+
+# Minutes in a day. A slot schedule is clamped to this rather than wrapping:
+# see `BrandContext.post_slots`.
+_DAY_MINUTES = 24 * 60
 
 # A brand with no timezone declared. Only matters for what "today" means in a
 # brief, and UTC is the least surprising thing to be wrong by.
@@ -124,6 +129,38 @@ class BrandContext:
     briefs: BriefCatalog = field(default_factory=BriefCatalog)
     # None while the brand declares no theme -- it can still post text.
     theme: PostTheme | None = None
+    # When the scheduler drafts. Zero/None means "this brand is driven by hand",
+    # which is the state every brand is in until brand.yaml says otherwise --
+    # so adding a cron to one brand cannot start one for the others.
+    every_hours: int = 0
+    first_slot: time | None = None
+
+    @property
+    def post_slots(self) -> tuple[time, ...]:
+        """The brand-local clock times a draft is started at, earliest first.
+
+        Derived rather than listed, because the three numbers that produce it
+        are already in brand.yaml and a hand-written list would be a fourth
+        place for them to disagree: `max_per_day` says how many, `first_slot`
+        says when the day opens, `every_hours` says how far apart.
+
+        Clamped at midnight rather than wrapped. A brand asking for eight posts
+        two hours apart from 09:00 gets the seven that fit; the eighth would be
+        tomorrow's 01:00, which is not what "posts per day" meant, and silently
+        moving a post into the small hours is worse than dropping it.
+        """
+        if not (self.every_hours > 0 and self.first_slot and self.max_per_day > 0):
+            return ()
+
+        opens = self.first_slot.hour * 60 + self.first_slot.minute
+        step = self.every_hours * 60
+        slots = []
+        for nth in range(self.max_per_day):
+            minutes = opens + nth * step
+            if minutes >= _DAY_MINUTES:
+                break
+            slots.append(time(minutes // 60, minutes % 60))
+        return tuple(slots)
 
     @property
     def enabled_accounts(self) -> tuple[Account, ...]:

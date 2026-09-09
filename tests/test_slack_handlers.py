@@ -285,16 +285,17 @@ async def test_a_rejection_after_expiry_keeps_the_draft_it_can_still_see(
 
 # --- a run that fell over ------------------------------------------------------
 #
-# `_brief_run` is a fire-and-forget task, so an exception in it has nowhere to
+# `brief_run` is a fire-and-forget task, so an exception in it has nowhere to
 # go. It used to go to the log and stop there, which meant a run that died
 # before posting its first draft looked exactly like a run nobody started. That
 # matters more now that `run` opens a database transaction before it says
-# anything in Slack.
+# anything in Slack -- and more again now that `app.scheduler` calls this on a
+# timer, where nobody is watching the log at 09:00.
 
 
 @pytest.fixture
 def brief_run(monkeypatch, slack):
-    """Drive `_brief_run` with a stubbed agent run and a recording Slack app.
+    """Drive `brief_run` with a stubbed agent run and a recording Slack app.
 
     `handlers.app` is replaced wholesale rather than having its client patched:
     the module-level Bolt app is what `_report_failure` posts through, and it is
@@ -303,8 +304,9 @@ def brief_run(monkeypatch, slack):
     monkeypatch.setenv("SLACK_DEREKT_CHANNEL_ID", "C0DEREKT")
     monkeypatch.setattr(handlers, "app", SimpleNamespace(client=slack))
 
-    async def drive(outcome) -> None:
-        async def fake_run(brief, brand, angle=None):
+    async def drive(outcome, approval_timeout=None) -> None:
+        async def fake_run(brief, brand, angle=None, **kwargs):
+            drive.passed = kwargs
             if isinstance(outcome, Exception):
                 raise outcome
             return outcome
@@ -314,13 +316,14 @@ def brief_run(monkeypatch, slack):
             # about, and a real one needs both a catalog on disk and a database.
             return "a brief", "trivia"
 
-        # Patched on app.main itself, because `_brief_run` imports these from
+        # Patched on app.main itself, because `brief_run` imports these from
         # there at call time. That this works at all is the import cycle staying
         # broken -- a top-level `from app.main import run` could not be reached.
         monkeypatch.setattr("app.main.run", fake_run)
         monkeypatch.setattr("app.main.brief_for", fake_brief_for)
-        await handlers._brief_run(make_brand())
+        await handlers.brief_run(make_brand(), approval_timeout=approval_timeout)
 
+    drive.passed = {}
     return drive
 
 
@@ -340,6 +343,21 @@ async def test_a_run_that_worked_says_nothing_extra(brief_run, slack):
     the log and stops there."""
     await brief_run("the agent's closing message")
     assert slack.posts == []
+
+
+async def test_a_mention_leaves_the_approval_window_alone(brief_run):
+    """Somebody who just mentioned the bot is looking at Slack right now, so the
+    run keeps `run`'s own default rather than being handed a stretched one."""
+    await brief_run("fine")
+    assert "approval_timeout" not in brief_run.passed
+
+
+async def test_a_scheduled_run_carries_its_approval_window(brief_run):
+    """The scheduler's whole reason for calling this instead of `run` directly:
+    a draft nobody is waiting for needs longer than the ten minutes a watched
+    run gets."""
+    await brief_run("fine", approval_timeout=5400)
+    assert brief_run.passed == {"approval_timeout": 5400}
 
 
 async def test_a_huge_error_is_trimmed_rather_than_dumped_into_the_channel(

@@ -365,6 +365,31 @@ async def recent_topics(
     return tuple(seen)
 
 
+async def drafts_since(
+    session: AsyncSession, *, brand_slug: str, since: datetime
+) -> int:
+    """How many drafts this brand has opened since `since`. The cron's guard.
+
+    Counts drafts rather than published posts, and the difference matters. The
+    question being asked is "has this slot already fired", not "how many posts
+    went live" -- a draft the reviewer rejected, or never looked at, still spent
+    a web search and a model call, and still means the 11:00 slot happened. A
+    scheduler restarted at 11:05 that counted only published posts would draft
+    11:00 a second time and bill for it.
+
+    `since` is an aware datetime -- in practice the slot's own start time, so
+    the answer is "has this slot been drafted" rather than "how many today".
+    The caller resolves it, because a brand's slots are on its own clock.
+    """
+    return (
+        await session.scalar(
+            select(sa.func.count())
+            .select_from(Draft)
+            .where(Draft.brand_slug == brand_slug, Draft.created_at >= since)
+        )
+    ) or 0
+
+
 async def record_verdict(
     session: AsyncSession,
     *,

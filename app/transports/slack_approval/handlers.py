@@ -242,7 +242,18 @@ async def _report_failure(brand: BrandContext, error: Exception) -> None:
         logger.exception("Could not tell %s that its run failed", brand.slug)
 
 
-async def _brief_run(brand: BrandContext) -> None:
+async def brief_run(brand: BrandContext, approval_timeout: int | None = None) -> None:
+    """Brief one brand and see it through, reporting a crash to its channel.
+
+    Public because `app.scheduler` runs the same thing on a timer that a mention
+    runs on demand, and the two must fail identically: an unattended 09:00 run
+    that dies has nobody watching the log, so the channel is the only place the
+    news can land.
+
+    `approval_timeout` is how long the reviewer gets. None keeps `run`'s default,
+    which is right for a mention -- somebody just asked for this and is looking
+    at Slack. The scheduler passes most of the gap to its next slot instead.
+    """
     # Imported here, not at module scope. `app.main` imports this package to
     # reach `request_approval`, so a top-level import would close the loop --
     # and it closes in the one direction that breaks, since `run` is defined
@@ -256,7 +267,8 @@ async def _brief_run(brand: BrandContext) -> None:
         # the draft: it decides the graphic's template at publish time, and it
         # is the dimension "which kinds of post work" (FR-4) groups by.
         brief, angle = await brief_for(brand)
-        answer = await run(brief, brand, angle=angle)
+        timeout = {} if approval_timeout is None else {"approval_timeout": approval_timeout}
+        answer = await run(brief, brand, angle=angle, **timeout)
         logger.info("Run for %s finished: %s", brand.slug, answer)
     except Exception as error:
         logger.exception("Run for %s failed", brand.slug)
@@ -267,4 +279,4 @@ async def _brief_run(brand: BrandContext) -> None:
 async def on_brief(ack, event):
     await ack()
     brand = brand_for_channel_id(event["channel"])
-    asyncio.create_task(_brief_run(brand))
+    asyncio.create_task(brief_run(brand))
