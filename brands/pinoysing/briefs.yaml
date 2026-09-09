@@ -24,7 +24,7 @@ angles:
 
   app_feature: |
     Pumili ng isang bagay na kayang gawin ng PinoySing at gumawa ng post tungkol
-    dito: improve Youtube karaoke experience na kayang magsearch gamit ang title o pangalan ng artist, pag-reserve ng
+    dito: improved Youtube karaoke experience na kayang magsearch gamit ang title o pangalan ng artist, pag-reserve ng
     sunod-sunod na kanta, o ang score na lumalabas
     pagkatapos ng kanta. Libre at walang login para makakanta.
     Isa lang ang i-post; huwag listahan ng features.
@@ -32,9 +32,7 @@ angles:
 
   song_spotlight: |
     Mag search online ng isang sikat na OPM o karaoke classic at gumawa ng post
-    tungkol dito -- kung bakit paborito sa videoke, o anong parte ang lagi nang
-    hirap kantahin. Yayain silang hanapin ito sa PinoySing, pero huwag mangako
-    na nandoon na ito sa library.
+    tungkol dito -- kung bakit paborito sa videoke. Yayain silang hanapin ito sa PinoySing.
 
   artist_spotlight: |
     Mag search online tungkol sa isang Pinoy artist o banda at gumawa ng post
@@ -43,17 +41,17 @@ angles:
 
   okasyon: |
     Gumawa ng post na naka-angkla sa okasyon o panahon ngayong {today} --
-    birthday, fiesta, reunion, payday Friday, Pasko, bakasyon, uwian ng OFW.
-    Ikabit sa videoke: anong kanta ang bagay, sino ang unang kakanta.
+    birthday, reunion, payday Friday, Pasko, bakasyon, uwian ng OFW.
+    I-relate sa videoke: anong kanta ang naaayon.
 
   karaoke_culture: |
     Gumawa ng post tungkol sa mga relatable na eksena sa videoke -- yung ayaw
     bitawan ang mic, yung nagre-reserve agad ng limang kanta, yung laging may
-    kaduet. Biruan na mapagmahal; hindi kailanman panlalait ng boses ninuman.
+    kaduet.
 
   duet_night: |
     Gumawa ng post tungkol sa mga kantang masarap i-duet o sabayan ng barkada.
-    Yayain silang mag-reserve ng dalawa o tatlo para tuloy-tuloy ang saya.
+    Yayain silang i-reserve at kantahin ang mga ito sa PinoySing.
 
   music_jokes: |
     Gumawa ng post tungkol sa mga patok na Pinoy jokes o memes tungkol sa music, videoke, o karaoke. 
