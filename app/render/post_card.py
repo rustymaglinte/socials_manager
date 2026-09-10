@@ -36,6 +36,25 @@ DEFAULT_SIZE = 1080
 
 TEMPLATES = ("marquee", "spotlight", "stage")
 
+# What Chromium needs to start inside a container, and neither flag is optional
+# where this actually runs.
+#
+# `--no-sandbox`: the setuid sandbox needs user namespaces, which a container
+# running as root does not have. Without this Chromium refuses to launch at all,
+# and it surfaces here as a RenderFailed on every post for every brand that
+# declares a theme -- an error about a browser, on a code path whose subject is
+# a caption.
+#
+# `--disable-dev-shm-usage`: /dev/shm defaults to 64MB in a container, and
+# Chromium puts shared memory there. Exhausting it is reported as a crashed tab
+# rather than as a full filesystem, so it is the second flag every headless
+# deployment ends up adding after losing an afternoon to the first.
+#
+# Harmless on a developer machine, which is the trouble: a laptop has a working
+# sandbox and a real /dev/shm, so nothing here can be verified by running it
+# locally. tests/test_render.py pins it against a stand-in browser instead.
+LAUNCH_ARGS = ["--no-sandbox", "--disable-dev-shm-usage"]
+
 # woff2 rather than ttf: a third of the bytes, and Chromium is the only renderer
 # this has to satisfy. Weight is declared per family because Archivo ships as a
 # variable font whose single file covers the whole range.
@@ -162,7 +181,7 @@ async def render(
 
     try:
         async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch()
+            browser = await playwright.chromium.launch(args=LAUNCH_ARGS)
             try:
                 page = await browser.new_page(
                     viewport={"width": size, "height": size},

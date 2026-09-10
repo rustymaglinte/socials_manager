@@ -156,6 +156,106 @@ def test_the_size_reaches_the_page_so_one_template_serves_every_resolution():
     assert "540px" in small
 
 
+# --- how the browser is launched ----------------------------------------------
+#
+# Asserted against a stand-in rather than a real Chromium, deliberately. The
+# end-to-end test below skips where the browser is not installed, which is
+# exactly the condition on a fresh container -- so if the launch arguments were
+# only covered there, the one property that decides whether rendering works in
+# production would be the one property CI never checks.
+
+
+class _FakeElement:
+    async def screenshot(self, **_kwargs) -> bytes:
+        return b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+
+class _FakePage:
+    async def set_content(self, *_args, **_kwargs) -> None: ...
+    async def evaluate(self, *_args, **_kwargs) -> None: ...
+    async def query_selector(self, _selector) -> _FakeElement:
+        return _FakeElement()
+
+
+class _FakeBrowser:
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def new_page(self, **_kwargs) -> _FakePage:
+        return _FakePage()
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _FakeChromium:
+    def __init__(self, record: dict) -> None:
+        self._record = record
+
+    async def launch(self, **kwargs) -> _FakeBrowser:
+        self._record.update(kwargs)
+        browser = _FakeBrowser()
+        self._record["browser"] = browser
+        return browser
+
+
+class _FakePlaywright:
+    def __init__(self, record: dict) -> None:
+        self.chromium = _FakeChromium(record)
+
+    async def __aenter__(self) -> "_FakePlaywright":
+        return self
+
+    async def __aexit__(self, *_exc) -> None: ...
+
+
+@pytest.fixture
+def launched(monkeypatch) -> dict:
+    """Render against a stand-in browser; yields how `launch` was called."""
+    from app.render import post_card
+
+    record: dict = {}
+    monkeypatch.setattr(
+        post_card, "async_playwright", lambda: _FakePlaywright(record)
+    )
+    return record
+
+
+async def test_chromium_is_launched_with_the_flags_a_container_needs(launched):
+    """No sandbox, and no reliance on /dev/shm. Both are deployment facts.
+
+    A container runs as root without user namespaces, and Chromium's setuid
+    sandbox refuses to start there -- which surfaces as a RenderFailed on every
+    post for any brand that declares a theme, not as anything naming a sandbox.
+    `--disable-dev-shm-usage` is the second half: /dev/shm defaults to 64MB in a
+    container, and Chromium treats exhausting it as a crashed tab.
+
+    Pinned as a test rather than left as a line of code because the failure it
+    prevents cannot be reproduced on the machine this is written on: a developer
+    laptop has both a working sandbox and a real /dev/shm.
+    """
+    from app.render.post_card import render
+
+    await render(template="marquee", card=PostCard(hook="Kanta"), theme=PINOYSING)
+
+    args = launched.get("args", [])
+    assert "--no-sandbox" in args
+    assert "--disable-dev-shm-usage" in args
+
+
+async def test_the_browser_is_closed_even_though_the_launch_changed(launched):
+    """The flags are new; the guarantee they sit beside is not.
+
+    `render` closes the browser in a `finally`, and a launch argument added
+    carelessly is exactly the edit that moves the call out from under it.
+    """
+    from app.render.post_card import render
+
+    await render(template="marquee", card=PostCard(hook="Kanta"), theme=PINOYSING)
+
+    assert launched["browser"].closed
+
+
 # --- the one test that needs a browser ----------------------------------------
 
 

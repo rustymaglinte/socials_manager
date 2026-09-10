@@ -14,6 +14,7 @@ clearable -- the same shape as `load_brand`.
 """
 
 from functools import lru_cache
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,6 +28,56 @@ ASYNC_DRIVER = "postgresql+asyncpg"
 # not accepted it since 1.4, and the resulting error names neither the variable
 # nor the fix.
 _SYNONYMS = ("postgresql://", "postgres://")
+
+
+def _asyncpg_tls(url: str) -> str:
+    """Rewrite libpq's `sslmode` as the `ssl` asyncpg answers to.
+
+    The same class of mistake as the scheme above, and it arrives on the same
+    DSNs. `sslmode` is libpq's spelling; psycopg2 reads it, asyncpg does not.
+    SQLAlchemy passes a query parameter it does not recognise straight through
+    to `asyncpg.connect()`, so the failure is a TypeError naming a keyword the
+    operator never typed -- against a connection string their database provider
+    handed them, on the one code path that has no other way to work.
+
+    Railway's *public* DATABASE_URL carries `?sslmode=require`, which is the URL
+    you paste to run a migration from a laptop or to point a second service at
+    the database. So this is not a courtesy: it is the difference between a
+    deploy that connects and an error about an argument nobody wrote.
+
+    Translated rather than dropped. `require` and `verify-full` are different
+    promises, and quietly discarding the parameter would downgrade a verified
+    connection to an unverified one -- a security change disguised as a
+    compatibility fix. asyncpg understands every value libpq defines, under the
+    other name, so the value crosses unchanged.
+
+    A DSN that says neither `sslmode` nor nothing at all comes back byte for
+    byte: re-encoding a query string we have no opinion about is a way to be
+    surprised by a parameter we never meant to touch.
+    """
+    parts = urlsplit(url)
+    if not parts.query:
+        return url
+
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    if not any(key == "sslmode" for key, _ in pairs):
+        return url
+
+    if any(key == "ssl" for key, _ in pairs):
+        # Both spellings present means somebody renamed one and forgot the
+        # other. The asyncpg-native name is the one that was going to be read;
+        # keeping `sslmode` beside it would hand `connect()` the very keyword
+        # this function exists to remove.
+        kept = [(key, value) for key, value in pairs if key != "sslmode"]
+    else:
+        # Rewritten in place rather than appended, so the parameter a reader
+        # goes looking for is where they left it.
+        kept = [
+            ("ssl", value) if key == "sslmode" else (key, value)
+            for key, value in pairs
+        ]
+
+    return urlunsplit(parts._replace(query=urlencode(kept)))
 
 
 class ConfigurationError(RuntimeError):
@@ -79,10 +130,10 @@ class Settings(BaseSettings):
 
         for synonym in _SYNONYMS:
             if url.startswith(synonym):
-                return f"{ASYNC_DRIVER}://{url[len(synonym):]}"
+                return _asyncpg_tls(f"{ASYNC_DRIVER}://{url[len(synonym):]}")
 
         if url.startswith(f"{ASYNC_DRIVER}://"):
-            return url
+            return _asyncpg_tls(url)
 
         scheme = url.split("://", 1)[0] if "://" in url else url
         raise ValueError(

@@ -1,0 +1,55 @@
+# The first entry is the load-bearing one. `COPY . .` runs after `uv sync`, so
+# without this the Windows .venv from the developer's working tree lands on top
+# of the Linux one the image just built -- producing an image whose interpreter
+# does not run, for a reason nothing in the build output mentions.
+.venv/
+venv/
+
+# Secrets. The image is a build artefact that gets pushed to a registry; a .env
+# copied into it is a secret leaving the machine. Environment comes from
+# Railway's own variables, never from a file in the image.
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+client_secret*.json
+*service-account*.json
+token.json
+
+# History and tooling state -- large, and nothing at runtime reads them.
+.git/
+.github/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.import_linter_cache/
+.grimp_cache/
+.coverage
+htmlcov/
+__pycache__/
+*.py[cod]
+
+# Tests do not run in the production image (`uv sync --no-dev` installs no
+# pytest), so shipping them is dead weight.
+tests/
+
+# Operational levers and local scratch. A PAUSE_PUBLISHING baked into an image
+# would halt publishing on every deploy of it -- the same hazard .gitignore
+# carves out, applied to the build context.
+PAUSE_PUBLISHING
+PAUSE_DRAFTING
+/out/
+logs/
+*.log
+*.db
+*.sqlite3
+
+# Editors / OS
+.vscode/
+.idea/
+.claude/
+Thumbs.db
+desktop.ini
+.DS_Store

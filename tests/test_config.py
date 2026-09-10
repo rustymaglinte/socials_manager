@@ -96,6 +96,101 @@ def test_the_environment_is_read_once(monkeypatch):
     assert settings().database_url.endswith("/second")
 
 
+# --- TLS ------------------------------------------------------------------
+#
+# `sslmode` is libpq's spelling and psycopg2 understands it. asyncpg does not:
+# SQLAlchemy passes an unrecognised query parameter straight through to
+# `asyncpg.connect()`, which rejects it with a TypeError naming a keyword the
+# operator never typed. Railway's *public* DATABASE_URL -- the one you paste to
+# run a migration from a laptop -- carries `?sslmode=require`, so this is the
+# normalisation that stands between a working deploy and an error message about
+# an argument nobody wrote.
+#
+# Translated rather than dropped: `require` and `verify-full` mean different
+# things, and silently discarding the parameter would downgrade a verified
+# connection to an unverified one. asyncpg accepts every value libpq defines
+# under the name `ssl`, so the value carries across untouched.
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("require", "require"),
+        ("disable", "disable"),
+        ("prefer", "prefer"),
+        ("allow", "allow"),
+        # Hyphenated, and asyncpg's SSLMode.parse understands them as written.
+        ("verify-ca", "verify-ca"),
+        ("verify-full", "verify-full"),
+    ],
+)
+def test_libpqs_sslmode_is_translated_to_the_name_asyncpg_knows(mode, expected):
+    url = Settings(
+        database_url=f"postgresql://u:p@h.proxy.rlwy.net:5432/railway?sslmode={mode}"
+    ).database_url
+    assert url == (
+        f"{ASYNC_DRIVER}://u:p@h.proxy.rlwy.net:5432/railway?ssl={expected}"
+    )
+
+
+def test_the_other_query_parameters_survive_the_translation():
+    """A DSN carries more than TLS -- dropping the rest would be a worse bug."""
+    url = Settings(
+        database_url=(
+            "postgresql://u:p@h:5432/d"
+            "?sslmode=require&application_name=publisher&connect_timeout=10"
+        )
+    ).database_url
+    assert url == (
+        f"{ASYNC_DRIVER}://u:p@h:5432/d"
+        f"?ssl=require&application_name=publisher&connect_timeout=10"
+    )
+
+
+def test_a_dsn_that_already_says_ssl_is_left_alone():
+    """Already correct for asyncpg; rewriting it could only break it."""
+    url = Settings(database_url="postgresql://u:p@h:5432/d?ssl=verify-full").database_url
+    assert url == f"{ASYNC_DRIVER}://u:p@h:5432/d?ssl=verify-full"
+
+
+def test_an_explicit_ssl_wins_over_a_stray_sslmode():
+    """Both spellings present means someone edited one and forgot the other.
+
+    The asyncpg-native name is the one they meant to be reading, and keeping
+    both would hand `sslmode` to `connect()` -- the very TypeError this exists
+    to prevent.
+    """
+    url = Settings(
+        database_url="postgresql://u:p@h:5432/d?ssl=require&sslmode=disable"
+    ).database_url
+    assert url == f"{ASYNC_DRIVER}://u:p@h:5432/d?ssl=require"
+
+
+def test_a_dsn_with_no_query_string_is_untouched():
+    url = Settings(database_url="postgresql://u:p@h:5432/d").database_url
+    assert url == f"{ASYNC_DRIVER}://u:p@h:5432/d"
+
+
+def test_the_translated_dsn_is_one_asyncpg_will_actually_accept():
+    """The point of the exercise, asserted against SQLAlchemy rather than a string.
+
+    The unit tests above pin the spelling; this pins the behaviour they exist
+    for -- that what reaches `asyncpg.connect()` is a keyword it knows. Without
+    it, renaming the parameter to something else asyncpg also rejects would
+    still pass every other test in this section.
+    """
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(
+        Settings(
+            database_url="postgres://u:p@h:5432/d?sslmode=require"
+        ).database_url
+    )
+    _, kwargs = engine.dialect.create_connect_args(engine.url)
+    assert "sslmode" not in kwargs
+    assert kwargs["ssl"] == "require"
+
+
 # --- redaction -------------------------------------------------------------
 #
 # A DSN is the one setting that is both routinely logged and a secret (C-5).
