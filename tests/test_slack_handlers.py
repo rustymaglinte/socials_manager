@@ -396,3 +396,99 @@ async def test_a_channel_with_no_brand_binding_does_not_mask_the_real_failure(
 
     await brief_run(RuntimeError("the database is down"))
     assert slack.posts == []
+
+
+# --- the mention itself --------------------------------------------------------
+#
+# `on_brief` is the whole of the on-demand entry point and had no test at all,
+# which is how three separate defects came to live in its four lines: a task
+# nothing held a reference to, an exception with nowhere to go, and a logger
+# that filed everything under someone else's name.
+
+
+async def test_the_module_logs_under_its_own_name():
+    """`from asyncio.log import logger` imports the *stdlib asyncio* logger.
+
+    Everything this module says then arrives labelled `asyncio`, so turning
+    asyncio's own noise down silences the report of a failed run -- and no
+    filter on `app.transports` ever sees it.
+    """
+    assert handlers.logger.name == "app.transports.slack_approval.handlers"
+
+
+@pytest.fixture
+def mention(monkeypatch, slack):
+    """Drive `on_brief` with a stubbed run and a recording Slack app."""
+    monkeypatch.setenv("SLACK_DEREKT_CHANNEL_ID", "C0DEREKT")
+    monkeypatch.setattr(handlers, "app", SimpleNamespace(client=slack))
+    return slack
+
+
+async def test_a_mention_holds_on_to_the_run_it_starts(mention, monkeypatch):
+    """asyncio keeps only a weak reference to a bare `create_task`.
+
+    Nothing else in this process holds the run, so the task is collectable
+    while it is suspended at the approval gate -- a mention that simply stops
+    existing, minutes in, with no error anywhere. `app.scheduler` already keeps
+    a `_tasks` set for exactly this; the mention path did not.
+    """
+    import asyncio
+
+    running = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def fake_brief_run(brand, **_kwargs):
+        running.set()
+        await finish.wait()
+
+    monkeypatch.setattr(handlers, "brief_run", fake_brief_run)
+
+    await handlers.on_brief(ack, {"channel": "C0DEREKT"})
+    await asyncio.wait_for(running.wait(), timeout=5)
+
+    assert handlers._tasks, "the run is unreferenced and may be collected mid-await"
+
+    finish.set()
+    await asyncio.gather(*tuple(handlers._tasks))
+    assert not handlers._tasks, "a finished run must not be held forever"
+
+
+async def test_a_mention_in_an_unmapped_channel_is_answered_rather_than_raised(
+    mention, monkeypatch
+):
+    """The bot invited to a channel .env knows nothing about.
+
+    `brand_for_channel_id` raises there, and it used to raise straight out of
+    the Bolt handler -- logged to stderr, with the person who mentioned the bot
+    seeing nothing at all. The answer goes back to the channel they asked in,
+    because that is the only channel this code knows is right.
+    """
+    async def never(*_args, **_kwargs):
+        raise AssertionError("no run should start for an unmapped channel")
+
+    monkeypatch.setattr(handlers, "brief_run", never)
+
+    await handlers.on_brief(ack, {"channel": "C0NOWHERE"})
+
+    assert mention.post["channel"] == "C0NOWHERE"
+    # Names the variable to set: this is a configuration mistake, and the
+    # useful answer is always "open that and set this".
+    assert "SLACK_" in mention.post["text"] and "CHANNEL_ID" in mention.post["text"]
+
+
+async def test_a_mention_in_a_mapped_channel_still_starts_a_run(mention, monkeypatch):
+    """The guard above must not swallow the ordinary case."""
+    import asyncio
+
+    started: list[str] = []
+
+    async def fake_brief_run(brand, **_kwargs):
+        started.append(brand.slug)
+
+    monkeypatch.setattr(handlers, "brief_run", fake_brief_run)
+
+    await handlers.on_brief(ack, {"channel": "C0DEREKT"})
+    await asyncio.gather(*tuple(handlers._tasks))
+
+    assert started == ["derekt"]
+    assert mention.posts == [], "a working mention says nothing extra"

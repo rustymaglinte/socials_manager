@@ -16,17 +16,25 @@ waiter's wake-up need no cross-thread handoff.
 
 import asyncio
 import json
-from asyncio.log import logger
+import logging
 
-from app.domain.brand.context import BrandContext
+from app.domain.brand import all_brands
+from app.domain.brand.context import BrandContext, BrandNotFound
 from app.transports.slack_approval import blocks
 from app.transports.slack_approval.client import (
     app,
     brand_for_channel_id,
+    channel_env_var,
     channel_for,
     update_message,
 )
 from app.transports.slack_approval.pending import registry
+
+# `logging.getLogger(__name__)`, not `from asyncio.log import logger`. The
+# latter is the *stdlib asyncio* logger, so everything this module says arrives
+# filed under `asyncio` -- which means turning asyncio's own noise down silences
+# the report that a run died, and no filter on `app.transports` ever sees it.
+logger = logging.getLogger(__name__)
 
 EXPIRED_SUFFIX = "  _(request already expired)_"
 
@@ -275,8 +283,50 @@ async def brief_run(brand: BrandContext, approval_timeout: int | None = None) ->
         await _report_failure(brand, error)
 
 
+# Strong references to the runs a mention started. asyncio keeps only a weak
+# one, so a task nothing here holds can be collected while it is suspended at
+# the approval gate -- a run that stops existing halfway through, with no error
+# anywhere to say it did. `app.scheduler` keeps the same set for the same
+# reason; this path simply did not, and the two must not disagree about it.
+_tasks: set[asyncio.Task] = set()
+
+
+async def _no_brand_here(channel: str) -> None:
+    """Answer a mention from a channel nothing is bound to.
+
+    Otherwise BrandNotFound propagates out of a Bolt handler, which logs it to
+    the bot's stderr and shows the person who mentioned the bot precisely
+    nothing. The reply goes to the channel they asked in, because that is the
+    only channel this code can be sure is the right one -- there is no brand to
+    look one up from, which is the whole problem.
+    """
+    known = ", ".join(sorted(brand.slug for brand in all_brands()))
+    try:
+        await app.client.chat_postMessage(
+            channel=channel,
+            text=(
+                f":grey_question: No brand is bound to this channel, so there "
+                f"is nothing for me to draft here.\n"
+                f"Set `{channel_env_var('<brand>')}` to `{channel}` in the "
+                f"environment to bind one — known brands: {known}."
+            ),
+        )
+    except Exception:  # noqa: BLE001 -- same argument as _report_failure
+        logger.exception("Could not answer an unbound mention in %s", channel)
+
+
 @app.event("app_mention")
 async def on_brief(ack, event):
     await ack()
-    brand = brand_for_channel_id(event["channel"])
-    asyncio.create_task(brief_run(brand))
+    channel = event["channel"]
+
+    try:
+        brand = brand_for_channel_id(channel)
+    except BrandNotFound:
+        logger.warning("Mention in %s, which no brand is bound to", channel)
+        await _no_brand_here(channel)
+        return
+
+    task = asyncio.create_task(brief_run(brand))
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)

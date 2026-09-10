@@ -22,12 +22,42 @@ HEADER_BLOCK_ID = "header"  # the line swapped for the verdict once decided
 NO_CAPTION = "_(no caption — the graphic carries this post)_"
 
 
+def escape(text: str) -> str:
+    """The three characters Slack mrkdwn reads as syntax rather than as text.
+
+    `&` first, or the replacements eat each other: escaping `<` before `&`
+    turns the `&` of `&lt;` into `&amp;`, and the reviewer reads `&amp;lt;`.
+
+    Applied to the draft, never to the verdict line above it. The draft is
+    model-written text produced after reading web pages nobody vetted; the
+    verdict is ours, and its `<@U123>` is a mention we intend to render.
+    """
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _preview(content: str) -> str:
+    """The draft as the reviewer sees it: escaped first, then trimmed to fit.
+
+    That order is the one that works. Slack's cap is on the string it is sent,
+    and escaping can quintuple a length -- a caption of ampersands is five
+    times its own size once escaped -- so trimming first would build a block
+    over the limit and Slack would refuse the whole message. Which is to say
+    the approval request for an ordinary post would simply never appear.
+    """
     if not content.strip():
         return NO_CAPTION
-    if len(content) <= PREVIEW_MAX_CHARS:
-        return content
-    return content[:PREVIEW_MAX_CHARS] + "\n\n_(truncated)_"
+
+    escaped = escape(content)
+    if len(escaped) <= PREVIEW_MAX_CHARS:
+        return escaped
+
+    cut = escaped[:PREVIEW_MAX_CHARS]
+    # A cut landing inside `&amp;` leaves `&am`, which renders as those three
+    # characters. Back up to the start of the entity it split.
+    opened = cut.rfind("&")
+    if opened > cut.rfind(";"):
+        cut = cut[:opened]
+    return cut + "\n\n_(truncated)_"
 
 
 def plain(text: str) -> list[dict]:

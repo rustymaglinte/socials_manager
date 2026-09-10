@@ -5,6 +5,8 @@ silent data loss rather than a rendering glitch: `_preview` must mark what it
 truncated, and `settle` must drop the buttons while keeping the draft.
 """
 
+import pytest
+
 from app.transports.slack_approval import blocks
 
 
@@ -18,6 +20,111 @@ def header_of(message: list[dict]) -> str:
         for block in message
         if block.get("block_id") == blocks.HEADER_BLOCK_ID
     )
+
+
+# --- what a draft may not do to the channel it is reviewed in -----------------
+#
+# The draft is model-written text, and the model writes it after reading web
+# pages nobody vetted. Everything downstream of the gate is protected by a human
+# saying yes -- but the approval message itself goes up *before* anyone has
+# looked, so whatever the model wrote is already in Slack, rendered, by the time
+# the question "should we post this?" is asked.
+#
+# Slack mrkdwn is not inert. `<!channel>` is a broadcast to everyone in the
+# workspace, and `<url|label>` renders as a link whose visible text need not
+# resemble where it goes. Neither is something a draft gets to decide.
+
+
+def test_a_draft_cannot_broadcast_to_the_channel():
+    """`<!channel>` in a caption must reach the reviewer as characters.
+
+    The failure this prevents is not a wrong post -- it is the review itself
+    paging the whole workspace at 09:00, on a draft that may well be rejected.
+    """
+    message = blocks.approval_message(
+        "req-1", "pinoysing", "facebook", "Kumusta <!channel> everyone"
+    )
+    preview = message[1]["text"]["text"]
+
+    assert "<!channel>" not in preview
+    assert "&lt;!channel&gt;" in preview
+
+
+def test_a_draft_cannot_disguise_a_link():
+    """`<url|label>` would let the draft show one destination and go to another."""
+    preview = blocks.approval_message(
+        "req-1", "derekt", "facebook", "See <https://evil.example|our docs>"
+    )[1]["text"]["text"]
+
+    assert "<https://evil.example|our docs>" not in preview
+    assert "&lt;https://evil.example|our docs&gt;" in preview
+
+
+def test_ampersands_are_escaped_before_the_angle_brackets():
+    """Order matters: escaping `<` first would turn `&lt;` into `&amp;lt;`."""
+    preview = blocks.approval_message("req-1", "b", "p", "Tom & Jerry <b>")[1][
+        "text"
+    ]["text"]
+
+    assert preview == "Tom &amp; Jerry &lt;b&gt;"
+
+
+def test_ordinary_text_is_untouched():
+    """Escaping must not become a thing reviewers have to read around."""
+    caption = "Kanta tayo! 23,200+ songs. Libre pa rin."
+    preview = blocks.approval_message("req-1", "b", "p", caption)[1]["text"]["text"]
+
+    assert preview == caption
+
+
+def test_the_verdict_line_still_renders_its_mention():
+    """Only the draft is escaped -- the header is ours, and `<@U1>` is the point.
+
+    Escaping everything would turn "Approved by @rusty" into a literal
+    `<@U123>`, which is a worse message than the one this protects against.
+    """
+    settled = blocks.settled_message("b", "p", "draft", ":x: Rejected by <@U123>")
+
+    assert "<@U123>" in header_of(settled)
+
+
+def test_escaping_cannot_push_a_draft_past_slacks_block_limit():
+    """A caption of ampersands quintuples in length when escaped.
+
+    Truncating first and escaping afterwards would send a 14,000-character
+    block, which Slack rejects outright -- so the approval message for a
+    perfectly ordinary post would simply never appear.
+    """
+    preview = blocks.approval_message(
+        "req-1", "b", "p", "&" * blocks.PREVIEW_MAX_CHARS
+    )[1]["text"]["text"]
+
+    assert len(preview) <= 3000
+
+
+@pytest.mark.parametrize(
+    ("caption", "leading"),
+    [
+        # 2800 ampersands escape to exactly 560 whole `&amp;` -- the cut lands
+        # on a boundary and the trim below is never needed.
+        ("&" * blocks.PREVIEW_MAX_CHARS, ""),
+        # One character of offset is all it takes to land the cut inside an
+        # entity instead of between two. This is the case that needs the trim,
+        # and the one a tidier fixture silently skips.
+        ("x" + "&" * blocks.PREVIEW_MAX_CHARS, "x"),
+    ],
+)
+def test_truncation_never_splits_an_escaped_entity(caption, leading):
+    """A cut inside `&amp;` leaves `&am`, which renders as those characters.
+
+    Both alignments, because the aligned one exercises none of the logic: it
+    passes whether or not the trim exists.
+    """
+    preview = blocks.approval_message("req-1", "b", "p", caption)[1]["text"]["text"]
+
+    body = preview.removesuffix("\n\n_(truncated)_")
+    assert not body.endswith(("&", "&a", "&am", "&amp"))
+    assert body.removeprefix(leading).replace("&amp;", "") == ""
 
 
 def test_approval_message_has_a_header_a_draft_a_footer_and_the_buttons():

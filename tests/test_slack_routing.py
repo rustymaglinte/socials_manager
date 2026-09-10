@@ -81,6 +81,74 @@ async def test_start_listener_refuses_to_run_without_credentials(
         await client.start_listener()
 
 
+# --- the configuration mistake that looks like working software --------------
+#
+# Every other routing error announces itself: a missing variable refuses to
+# boot, an unknown channel raises. Two brands sharing one channel id does
+# neither. `brand_for_channel_id` scans the map and returns the first match, so
+# one brand simply answers for the other -- drafts for Derekt posted into the
+# personal channel, under Derekt's voice, with nothing in any log to say so.
+#
+# It is also the likeliest mistake to actually make. The ids are opaque C0...
+# strings pasted one after another into a deployment's environment, where a
+# duplicated clipboard is invisible by construction.
+
+
+class _WouldConnect(Exception):
+    """Raised in place of opening a socket, so 'did it get that far' is testable."""
+
+
+@pytest.fixture
+def no_socket(monkeypatch: pytest.MonkeyPatch):
+    """`start_listener` stopped exactly where it would reach for the network.
+
+    Not merely tidiness. Every test here is about the validation that runs
+    *before* the socket, and a test asserting a refusal that has not been
+    implemented yet sails straight past the missing guard and tries to reach
+    Slack with conftest's fake token -- which does not fail, it hangs and
+    retries. So the stub is what keeps a red test fast instead of infinite.
+    """
+    # A previous connection would make start_listener return early.
+    monkeypatch.setattr(client, "_handler", None)
+
+    def refuse(*_args, **_kwargs):
+        raise _WouldConnect
+
+    monkeypatch.setattr(client, "AsyncSocketModeHandler", refuse)
+
+
+async def test_start_listener_refuses_two_brands_sharing_one_channel(
+    two_brands, no_socket, monkeypatch
+):
+    """The one routing error that is otherwise silent (SPECS D3)."""
+    monkeypatch.setenv("SLACK_DEREKT_CHANNEL_ID", "C0SHARED")
+    monkeypatch.setenv("SLACK_PERSONAL_CHANNEL_ID", "C0SHARED")
+
+    with pytest.raises(RuntimeError) as caught:
+        await client.start_listener()
+
+    assert not isinstance(caught.value, _WouldConnect), (
+        "a duplicated channel id has to be caught before the socket opens"
+    )
+    message = str(caught.value)
+    assert "C0SHARED" in message
+    # Both slugs, because the fix is to work out which of them is wrong.
+    assert "derekt" in message
+    assert "personal" in message
+
+
+async def test_distinct_channels_are_not_mistaken_for_a_collision(
+    two_brands, channels, no_socket
+):
+    """The guard must not fire on a configuration that is actually correct.
+
+    Reaching the socket is the pass condition here: it means validation had no
+    complaint and handed off to the thing this test refuses to let it do.
+    """
+    with pytest.raises(_WouldConnect):
+        await client.start_listener()
+
+
 async def test_stop_listener_without_a_connection_is_a_no_op():
     await client.stop_listener()  # must not raise
 

@@ -133,6 +133,32 @@ async def start_listener() -> None:
     if missing:
         raise RuntimeError(f"Missing from .env: {', '.join(missing)}")
 
+    # Every other routing mistake announces itself -- a missing variable is the
+    # check above, an unknown channel raises on arrival. Two brands sharing one
+    # id does neither: `brand_for_channel_id` scans the map and returns the
+    # first match, so one brand quietly answers for the other and its drafts go
+    # out in the wrong channel under the wrong voice, with nothing anywhere
+    # saying so. That is the brand-isolation break D3 exists to prevent, and it
+    # arrives as a duplicated clipboard while somebody pastes opaque C0...
+    # strings into a deployment's environment one after another.
+    shared: dict[str, list[str]] = {}
+    for slug, channel in sorted(routes.items()):
+        shared.setdefault(channel, []).append(slug)
+    collisions = {
+        channel: slugs for channel, slugs in shared.items() if len(slugs) > 1
+    }
+    if collisions:
+        raise RuntimeError(
+            "Two brands are bound to one Slack channel, which would post one "
+            "brand's drafts as another (SPECS D3). Fix the duplicated id in "
+            ".env:\n"
+            + "\n".join(
+                f"  {channel} <- {', '.join(channel_env_var(s) for s in slugs)}"
+                f"  ({', '.join(slugs)})"
+                for channel, slugs in sorted(collisions.items())
+            )
+        )
+
     handler = AsyncSocketModeHandler(app, APP_TOKEN)
     await handler.connect_async()
     # Assigned only once connected, so a failed attempt can be retried rather
