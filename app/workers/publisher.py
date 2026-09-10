@@ -32,6 +32,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import httpx
+from dotenv import load_dotenv
 
 from app.credentials import CredentialsMissing, credentials_for
 from app.domain.brand import BrandNotFound, all_brands, load_brand
@@ -48,6 +49,21 @@ from app.store.repositories import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Explicitly, and this is the one process that has to say so. Every other entry
+# point gets .env for free -- `app.main` and `app.scheduler` call this, and both
+# would inherit it anyway through the Slack client and the LLM factory, which
+# call it at import. This process imports neither, because C-4 forbids it from
+# importing the model at all. The isolation contract is therefore exactly why
+# the publisher alone was reading an environment .env had never been loaded into.
+#
+# The failure that hid it: `app.config` reads .env through pydantic's `env_file`,
+# which fills the Settings model without touching os.environ. So the database
+# connected, the worker looked healthy, and only `os.getenv` in
+# `app.credentials` came back empty -- which surfaces as "Set FB_PAGE_TOKEN_<X>
+# in .env" against a .env that has it, and dead-letters every post as a
+# configuration error no operator can find.
+load_dotenv()
 
 # How often to look for work. Posts are scheduled to the minute at best, so
 # polling faster buys nothing and costs a query.

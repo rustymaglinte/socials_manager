@@ -10,7 +10,21 @@ PREVIEW_MAX_CHARS = 2800  # a section block tops out at 3000
 HEADER_BLOCK_ID = "header"  # the line swapped for the verdict once decided
 
 
+# What stands in for a caption that is deliberately empty. Slack rejects a
+# section block whose text is zero characters ("must be more than 0 characters"),
+# and an empty caption is a legal post here rather than a mistake: a card can
+# carry the whole thing, which is why the publisher refuses only a post with
+# neither words nor image, and why `publish_photo` checks the image for
+# emptiness instead of the message. So the absence is rendered rather than
+# passed through -- a reviewer approving a card-only post should see that there
+# is no caption on purpose, not an approval message with a blank where the post
+# should be.
+NO_CAPTION = "_(no caption — the graphic carries this post)_"
+
+
 def _preview(content: str) -> str:
+    if not content.strip():
+        return NO_CAPTION
     if len(content) <= PREVIEW_MAX_CHARS:
         return content
     return content[:PREVIEW_MAX_CHARS] + "\n\n_(truncated)_"
@@ -153,6 +167,20 @@ def reject_modal(private_metadata: str) -> dict:
 
 def edit_modal(label: str, content: str, private_metadata: str) -> dict:
     """`label` names the draft above the box -- "derekt · linkedin"."""
+    element = {
+        "type": "plain_text_input",
+        "action_id": "content",
+        "multiline": True,
+        "max_length": MODAL_MAX_CHARS,
+    }
+    # Omitted rather than set to "", for the same reason `_preview` substitutes:
+    # Slack validates an empty string as a missing value, so prefilling a
+    # card-only draft's absent caption would reject the modal the reviewer is
+    # trying to open. Absent, the box simply starts empty, which is correct --
+    # there is no caption yet, and typing one is exactly what Edit is for.
+    if content:
+        element["initial_value"] = content
+
     return {
         "type": "modal",
         "callback_id": "edit_submit",
@@ -166,13 +194,7 @@ def edit_modal(label: str, content: str, private_metadata: str) -> dict:
                 "type": "input",
                 "block_id": "draft",
                 "label": {"type": "plain_text", "text": label[:150]},
-                "element": {
-                    "type": "plain_text_input",
-                    "action_id": "content",
-                    "multiline": True,
-                    "initial_value": content,
-                    "max_length": MODAL_MAX_CHARS,
-                },
+                "element": element,
             }
         ],
     }

@@ -140,3 +140,43 @@ def test_edit_modal_label_stays_within_slacks_limit():
     modal = blocks.edit_modal("b" * 300, "draft", "{}")
 
     assert len(modal["blocks"][0]["label"]["text"]) == 150
+
+
+# --- the card-only post, which has no caption to show ----------------------
+#
+# Slack rejects a section block of zero characters outright ("must be more than
+# 0 characters"), and it rejects the whole chat.postMessage call rather than
+# that one block -- so an empty caption used to kill the run at the gate, after
+# the card had already been rendered. An empty caption is legal here: the
+# publisher refuses only a post with neither words nor image.
+
+
+def test_a_post_with_no_caption_still_renders_a_valid_block():
+    message = blocks.approval_message("req-1", "pinoysing", "facebook", "")
+
+    assert message[1]["text"]["text"] == blocks.NO_CAPTION
+    assert len(message[1]["text"]["text"]) > 0
+
+
+def test_a_whitespace_only_caption_counts_as_none():
+    """Slack measures the string, not its content -- " " passes its length check
+    and then renders as a blank gap the reviewer cannot interpret."""
+    message = blocks.approval_message("req-1", "pinoysing", "facebook", "   \n  ")
+
+    assert message[1]["text"]["text"] == blocks.NO_CAPTION
+
+
+def test_the_settled_record_of_a_card_only_post_is_also_valid():
+    """Same builder, different caller: a modal submission rebuilds the message
+    from scratch, and would fail identically."""
+    settled = blocks.settled_message("pinoysing", "facebook", "", ":x: Rejected")
+
+    assert settled[1]["text"]["text"] == blocks.NO_CAPTION
+
+
+def test_edit_modal_omits_initial_value_rather_than_sending_an_empty_one():
+    """Slack validates "" as a missing value, so prefilling an absent caption
+    would reject the modal the reviewer is trying to open."""
+    modal = blocks.edit_modal("pinoysing · facebook", "", "{}")
+
+    assert "initial_value" not in modal["blocks"][0]["element"]
