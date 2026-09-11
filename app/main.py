@@ -17,7 +17,7 @@ from app.domain.brand.context import BrandContext, BrandNotFound
 from app.domain.brand.loader import all_brands
 from app.domain.states import APPROVING_VERDICTS, Verdict
 from app.graphics import Card, RenderFailed, render_card, supports_graphics
-from app.llm.factory import agent_creation
+from app.agent.factory import agent_creation
 from app.store.engine import dispose, transaction
 from app.store.repositories import (
     approving_verdict,
