@@ -114,12 +114,40 @@ async def to_resume_decision(run: Run, action: dict, revisions: list[str]) -> di
             logging.warning(
                 "Card for %s/%s not rendered: %s", brand.slug, platform, error
             )
+            # Against the same budget as a rejection, and for the same reason:
+            # what is bounded is how many times one run may go back to the
+            # model, not who asked it to. FR-7's loop was designed around a hook
+            # four words too long, which the next attempt fixes -- but a browser
+            # that cannot start fails identically however the copy is rewritten,
+            # and without a cap the model rewrote a caption against it once per
+            # recursion step until LangGraph stopped the run.
+            if len(revisions) < MAX_REVISIONS:
+                revisions.append(f"render failed: {error}")
+                return {
+                    "type": "reject",
+                    "message": (
+                        f"The post graphic could not be rendered: {error}\n\n"
+                        f"Fix the card copy and call submit_for_approval again "
+                        f"for {platform}. The caption itself was not the problem."
+                    ),
+                }
+
+            # Out of attempts. The caption was never the problem, so the post is
+            # salvaged as text rather than abandoned -- a text post is worse
+            # than an illustrated one and far better than nothing.
+            logging.error(
+                "Giving up on the %s graphic after %d attempt(s): %s",
+                platform,
+                MAX_REVISIONS,
+                error,
+            )
             return {
                 "type": "reject",
                 "message": (
-                    f"The post graphic could not be rendered: {error}\n\n"
-                    f"Fix the card copy and call submit_for_approval again for "
-                    f"{platform}. The caption itself was not the problem."
+                    f"The post graphic still could not be rendered: {error}\n\n"
+                    f"Stop trying to fix the card. Call submit_for_approval "
+                    f"once more for {platform} with the same caption and an "
+                    f"empty hook, so it goes out as a text post."
                 ),
             }
     elif hook:

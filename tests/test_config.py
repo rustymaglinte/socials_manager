@@ -8,7 +8,7 @@ this app cannot use verbatim, and the error you get from passing one straight to
 import pytest
 from pydantic import ValidationError
 
-from app.config import ASYNC_DRIVER, ConfigurationError, Settings, settings
+from app.config import ASYNC_DRIVER, ConfigurationError, Settings, redact, settings
 
 
 @pytest.fixture(autouse=True)
@@ -217,6 +217,56 @@ def test_the_translated_dsn_is_one_asyncpg_will_actually_accept():
 )
 def test_the_password_never_reaches_a_log_line(raw, expected):
     assert Settings(database_url=raw).redacted_database_url == expected
+
+
+# `redacted_database_url` covers the DSN this module owns. `redact` covers the
+# same secret arriving inside somebody else's sentence -- which is where it
+# actually turns up, because a driver that cannot connect puts the whole
+# connection string into its exception, and that gets logged and posted.
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "connection failed: postgresql+asyncpg://u:hunter2@h:5432/d",
+            "connection failed: postgresql+asyncpg://u:***@h:5432/d",
+        ),
+        # Not only Postgres: the same shape carries any credential.
+        ("redis://default:s3cret@cache:6379", "redis://default:***@cache:6379"),
+        # Mid-sentence, with text on both sides.
+        (
+            "tried postgres://a:b@h/d and gave up",
+            "tried postgres://a:***@h/d and gave up",
+        ),
+    ],
+)
+def test_redact_masks_a_password_wherever_it_appears(text, expected):
+    assert redact(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "the model returned no content",
+        # No password to mask; must not be mangled into one.
+        "postgresql://u@h:5432/d",
+        "see https://example.com/docs for more",
+        "",
+    ],
+)
+def test_redact_leaves_alone_what_carries_no_secret(text):
+    assert redact(text) == text
+
+
+def test_redact_keeps_what_an_operator_needs_to_diagnose():
+    """Which database refused them is the useful half, and is not a secret."""
+    redacted = redact("could not connect: postgresql://socials:pw@db.internal:5432/railway")
+
+    assert "pw" not in redacted.replace("***", "")
+    assert "db.internal" in redacted
+    assert "socials" in redacted
+    assert "railway" in redacted
 
 
 def test_a_password_containing_an_at_sign_is_still_hidden():

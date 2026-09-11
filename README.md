@@ -43,42 +43,58 @@ Enforced by `lint-imports` (see `pyproject.toml`), not by convention:
 
 ## Layout
 
+`(planned)` marks a package that exists as a directory but not yet as code.
+
 ```
 brands/          config data, no Python — voice, cadence, policy, accounts
 app/
   transports/    Slack (Socket Mode). Swappable — chat is transport, not system.
-  api/           OAuth redirect receiver — stdlib, on demand, not a service
+  api/           OAuth redirect receiver — stdlib, on demand      (planned)
   agent/         create_agent + middleware stack
   llm/           provider boundary — the ONLY place that names a provider
+                 (factory.py only; capabilities/roles/middleware  (planned))
   domain/        models, state machine, policy engine  <- framework-free
-  platforms/     x, linkedin, facebook, youtube        <- brand-blind
-  credentials/   encrypted token vault + refresh schedules
-  workers/       publisher, metrics, token_refresher, quota
+  platforms/     facebook; x, linkedin, youtube                   (planned)
+  credentials/   env-var lookup today; encrypted vault            (planned)
+  workers/       publisher; metrics, token_refresher, quota       (planned)
   store/         brand-scoped repositories, checkpointer, migrations
 tests/
 ```
 
+`app/platforms/PUBLISHABLE_PLATFORMS` is the honest inventory: a brand may
+declare an X account, but a run is only ever briefed for platforms that have a
+publisher adapter behind them.
+
 ## LLM routing
 
-Provider-agnostic by construction, not by avoiding features. Routed through
-**OpenRouter** by default. Three roles, each swappable with one env var:
+Routed through **OpenRouter**. One model, built in
+[app/llm/factory.py](app/llm/factory.py) from three variables:
 
 ```
-LLM_CHAT_MODEL=openrouter:anthropic/claude-...      # agent loop
-LLM_VARIANT_MODEL=openrouter:anthropic/claude-...   # per-platform copy
-LLM_CLASSIFY_MODEL=openrouter:openai/gpt-...-mini   # tagging, metric summaries
+OPENROUTER_MODEL       # the id, from https://openrouter.ai/models
+OPENROUTER_PROVIDER    # what init_chat_model is told to construct
+OPENROUTER_API_KEY
 ```
 
-`uv sync --extra openrouter`, plus one direct provider extra to fall back to and
-A/B against. Model IDs from <https://openrouter.ai/models>.
+**Planned, not built.** The design below is the intended shape; the modules it
+names are empty files today, and this section is written in the future tense on
+purpose — an earlier version of it described them as though they existed, which
+is how `TAVILY_API_KEY` came to be undocumented while eight variables nothing
+reads were listed as required.
 
-A gateway splits "provider" into two axes — **gateway** (who we send HTTP to) and
-**family** (whose model runs) — and capability differs along both.
-`openrouter:anthropic/...` and `anthropic:...` run the same model with different
-caching mechanisms. `llm/capabilities.py` keys on the pair.
+- Three roles (`LLM_CHAT_MODEL`, `LLM_VARIANT_MODEL`, `LLM_CLASSIFY_MODEL`),
+  each swappable independently. Today all three would be one model.
+- `llm/capabilities.py` keying on the **gateway × family** pair, because
+  `openrouter:anthropic/...` and `anthropic:...` run the same model with
+  different caching mechanisms.
+- `llm/middleware.py` translating `Segment.cache_after` into whatever the route
+  wants. [app/agent/prompts/assembly.py](app/agent/prompts/assembly.py) already
+  computes those cache breakpoints; `render()` then joins the text and drops
+  them, because there is nothing yet to hand them to. **Prompt caching is not
+  currently in effect**, whatever the segment boundaries imply.
 
-Caching is the one thing that does not port, and this app leans on it hard.
-**Verify it empirically** — see [app/llm/README.md](app/llm/README.md).
+Caching is the one thing that does not port, and the design leans on it hard.
+**Verify it empirically** when it lands — see [app/llm/README.md](app/llm/README.md).
 
 ## Post lifecycle
 
@@ -90,13 +106,15 @@ DRAFT -> PENDING_APPROVAL -> APPROVED -> SCHEDULED -> PUBLISHING -> PUBLISHED
 
 ## Processes
 
-Long-running:
+Long-running — two, and they are the whole of it:
 
 ```
-uv run python -m app.scheduler                # Socket Mode bot + draft on each brand's slots
-uv run python -m app.workers.publisher        # claim + publish on schedule
-uv run python -m app.workers.token_refresher  # LinkedIn tokens expire in 60d
+uv run python -m app.scheduler          # Socket Mode bot + draft on each brand's slots
+uv run python -m app.workers.publisher  # claim + publish on schedule
 ```
+
+(`app.workers.token_refresher` is in the build order below, not in the tree.
+LinkedIn's 60-day expiry will force it; nothing publishes to LinkedIn yet.)
 
 `uv run` rather than bare `python` because `[tool.uv] package = false` — the
 project is never installed, `app` is imported from the working directory, so
@@ -136,9 +154,10 @@ It lives beside `app.main` rather than under `app/workers/` because the layers
 contract makes `app.agent` and `app.workers` independent siblings — nothing in
 `workers/` may invoke the model.
 
-On demand — binds a port only for the length of one authorize dance, then exits.
-Refresh is server-to-server and needs no callback, so this runs about once per
-account per year:
+Planned, on demand — binds a port only for the length of one authorize dance,
+then exits. Refresh is server-to-server and needs no callback, so this would run
+about once per account per year. `app/api/` is an empty package today; Facebook
+Page tokens are set directly in the environment, so nothing needs it yet:
 
 ```
 uv run python -m app.api.connect <brand> <platform>   # OAuth redirect receiver
@@ -146,23 +165,24 @@ uv run python -m app.api.connect <brand> <platform>   # OAuth redirect receiver
 
 ## Environment
 
-Set these in your shell or a local `.env` (gitignored; never commit):
+**[`.env.example`](.env.example) is the list**, not this section. Copy it to
+`.env` (gitignored; never commit) and fill it in.
 
-```
-# Provider key — set whichever provider LLM_*_MODEL points at
-ANTHROPIC_API_KEY
-DATABASE_URL
-CREDENTIAL_ENCRYPTION_KEY     # Fernet key for the token vault
-SLACK_BOT_TOKEN               # xoxb-
-SLACK_APP_TOKEN               # xapp- (Socket Mode)
-SLACK_PERSONAL_CHANNEL_ID     # one C0... id per brand: SLACK_<SLUG>_CHANNEL_ID.
-SLACK_DEREKT_CHANNEL_ID       # The channel decides the brand (SPECS D3), so a
-SLACK_PINOYSING_CHANNEL_ID    # wrong id here is a brand-isolation break.
-META_APP_ID / META_APP_SECRET
-X_CLIENT_ID / X_CLIENT_SECRET
-LINKEDIN_CLIENT_ID / LINKEDIN_CLIENT_SECRET
-GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
-```
+It is checked rather than maintained by hand:
+[tests/test_env_example.py](tests/test_env_example.py) scans the source for
+every variable the code reads with no fallback and fails if one is undocumented,
+or if a real-looking value ever lands in the committed template. This paragraph
+used to be a hand-written list instead, and it had drifted badly — it required
+eight variables nothing reads, and omitted `TAVILY_API_KEY`, without which the
+agent cannot start.
+
+Two that are easy to get wrong, and neither fails in an obvious way:
+
+- **Every brand directory needs a `SLACK_<SLUG>_CHANNEL_ID`**, including brands
+  you are not drafting for. `start_listener` refuses to boot otherwise.
+- **They must be distinct.** The channel decides the brand (SPECS D3), so two
+  brands sharing an id means one silently answers for the other. `start_listener`
+  now refuses that too, rather than discovering it in a published post.
 
 Google hands you the YouTube OAuth client as a downloaded JSON file. Do not
 leave it in the project root. Put it in `secrets/` (gitignored) or outside the

@@ -82,6 +82,22 @@ MAX_SLEEP_SECONDS = 900
 # and the queue behind it is fine.
 KILL_SWITCH = Path(os.getenv("DRAFTING_KILL_SWITCH", "PAUSE_DRAFTING"))
 
+# The same switch, spelled for a host with no filesystem to put a file on --
+# see `app.workers.publisher.PAUSE_VAR`, which carries the argument. Separate
+# from the publisher's on purpose: pausing new drafts while approved posts keep
+# going out is the common case.
+PAUSE_VAR = "PAUSE_DRAFTING"
+
+_YES = frozenset({"1", "true", "yes", "on"})
+
+
+def drafting_paused() -> bool:
+    """Whether FR-15's drafting switch is on, by either spelling."""
+    setting = (os.getenv(PAUSE_VAR) or "").strip().lower()
+    if setting:
+        return setting in _YES
+    return KILL_SWITCH.exists()
+
 # Brands whose run has not finished yet. A run is spawned as a task so one
 # brand's reviewer cannot hold up another brand's slot, which means the loop can
 # come back around while the first is still waiting at the gate; without this a
@@ -231,9 +247,11 @@ async def tick(brands: list[BrandContext], now: datetime | None = None) -> int:
     and awaiting it here would mean one brand's slow reviewer silently costing
     another brand its slot.
     """
-    if KILL_SWITCH.exists():
+    if drafting_paused():
         logger.warning(
-            "%s exists -- drafting is paused. Delete it to resume.", KILL_SWITCH
+            "Drafting is paused (%s exists, or %s is set). Remove it to resume.",
+            KILL_SWITCH,
+            PAUSE_VAR,
         )
         return 0
 
@@ -346,8 +364,12 @@ async def main(argv: list[str] | None = None) -> int:
     brands = _select(args.brand)
     try:
         if args.once:
-            if KILL_SWITCH.exists():
-                logger.warning("%s exists -- drafting is paused.", KILL_SWITCH)
+            if drafting_paused():
+                logger.warning(
+                    "Drafting is paused (%s exists, or %s is set).",
+                    KILL_SWITCH,
+                    PAUSE_VAR,
+                )
                 return 0
             # Sequential: each run puts a draft in front of the same reviewer,
             # and asking about three at once is worse than asking three times.

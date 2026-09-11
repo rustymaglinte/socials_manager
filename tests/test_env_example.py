@@ -24,6 +24,7 @@ import pytest
 from app.config import Settings
 from app.credentials.tokens import token_env_var
 from app.domain.brand import all_brands
+from app.platforms import PUBLISHABLE_PLATFORMS
 from app.transports.slack_approval.client import channel_env_var
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -65,16 +66,31 @@ def _required_by_the_code() -> dict[str, str]:
         if field.is_required():
             required.setdefault(name.upper(), "app/config.py")
 
-    # Built per brand from an f-string, so no literal to find. These are the two
-    # that multiply as brands are added, and the two most often half-filled-in.
+    # Built per brand from an f-string, so there is no literal to find. These
+    # are the two families that multiply as brands are added.
     for brand in all_brands():
+        # Every brand directory, without exception: `start_listener` refuses to
+        # boot unless all of them are routed, including brands nothing drafts for.
         required.setdefault(channel_env_var(brand.slug), "app/transports/.../client.py")
-        for account in brand.enabled_accounts:
-            try:
-                variable = token_env_var(brand.slug, account.platform)
-            except Exception:  # noqa: BLE001 -- a platform with no convention yet
+
+        # Tokens are narrower, and the narrowing is not a convenience -- it is
+        # what the code does. `credentials_for` is only ever reached for an
+        # account that is enabled, has a real id rather than a TODO
+        # (`publishable_accounts`), and whose platform has a publisher adapter
+        # (`PUBLISHABLE_PLATFORMS`). Anything outside that set is refused before
+        # the token is looked up, so demanding it here would be demanding a
+        # variable the code cannot read.
+        #
+        # It tracks configuration rather than freezing it: fill in derekt's
+        # page_id and FB_PAGE_TOKEN_DEREKT becomes required by this test on the
+        # same commit.
+        for account in brand.publishable_accounts:
+            if account.platform not in PUBLISHABLE_PLATFORMS:
                 continue
-            required.setdefault(variable, "app/credentials/tokens.py")
+            required.setdefault(
+                token_env_var(brand.slug, account.platform),
+                "app/credentials/tokens.py",
+            )
 
     return required
 

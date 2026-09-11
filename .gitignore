@@ -48,6 +48,11 @@ logs/
 # repo is deployed, and it must never arrive by `git pull`.
 PAUSE_PUBLISHING
 
+# The drafting half of the same lever (app/scheduler.py), ignored for the same
+# reason. Its absence here was an oversight rather than a decision: committing
+# one would stop every deployment drafting, silently, on the next `git pull`.
+PAUSE_DRAFTING
+
 # ---- Tooling caches ------------------------------------------------------
 .pytest_cache/
 .ruff_cache/

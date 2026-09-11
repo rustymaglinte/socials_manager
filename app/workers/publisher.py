@@ -90,6 +90,36 @@ STALE_CLAIM_AFTER = timedelta(minutes=15)
 # is that something is wrong with the database.
 KILL_SWITCH = Path(os.getenv("PUBLISHING_KILL_SWITCH", "PAUSE_PUBLISHING"))
 
+# The same switch, spelled for a host you cannot put a file on.
+#
+# The file is the right lever where there is a filesystem to reach: no restart,
+# and it works when the reason you want it is that the database is unwell. On a
+# container it is not a lever at all -- no shell to create it in, and an
+# ephemeral disk that forgets it at the next redeploy. There the argument
+# inverts exactly: setting a variable is the one-click operation.
+#
+# So both, and the deployment picks. Deliberately the same name as the file, so
+# there is one thing to remember: create PAUSE_PUBLISHING, or set it to 1.
+PAUSE_VAR = "PAUSE_PUBLISHING"
+
+# Spelled out rather than "anything non-empty". `PAUSE_PUBLISHING=false` set by
+# somebody who believes they are turning the switch *off* must not stop the
+# queue -- that is the one misreading with a cost attached.
+_YES = frozenset({"1", "true", "yes", "on"})
+
+
+def publishing_paused() -> bool:
+    """Whether FR-15's switch is on, by either spelling.
+
+    Checked every cycle rather than at startup, so it takes effect within
+    POLL_SECONDS -- the moment you want this is the moment you do not want to
+    restart anything.
+    """
+    setting = (os.getenv(PAUSE_VAR) or "").strip().lower()
+    if setting:
+        return setting in _YES
+    return KILL_SWITCH.exists()
+
 
 def worker_name() -> str:
     """Who holds a claim. Recorded so a stale one can be traced to a process."""
@@ -215,9 +245,11 @@ async def run_once(client: httpx.AsyncClient, *, limit: int = BATCH_SIZE) -> int
     publishing one at a time keeps a burst of failures from looking like a
     coordinated attack on someone's API quota.
     """
-    if KILL_SWITCH.exists():
+    if publishing_paused():
         logger.warning(
-            "%s exists -- publishing is halted. Delete it to resume.", KILL_SWITCH
+            "Publishing is halted (%s exists, or %s is set). Remove it to resume.",
+            KILL_SWITCH,
+            PAUSE_VAR,
         )
         return 0
 

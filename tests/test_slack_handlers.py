@@ -492,3 +492,142 @@ async def test_a_mention_in_a_mapped_channel_still_starts_a_run(mention, monkeyp
 
     assert started == ["derekt"]
     assert mention.posts == [], "a working mention says nothing extra"
+
+
+# --- what a crash is allowed to say in public ---------------------------------
+#
+# `_report_failure` puts an arbitrary exception into a Slack channel, and the
+# most likely failure is a database that would not connect -- whose exception
+# text is the one place a DSN, password and all, routinely turns up. app.config
+# already treats a connection string as the setting that is both routinely
+# logged and a secret (C-5); it redacts the one it owns. This is the other path,
+# where the URL arrives inside somebody else's error message.
+
+
+async def test_a_database_password_does_not_reach_the_channel(brief_run, slack):
+    """The failure that is both the likeliest and the worst to print."""
+    await brief_run(
+        RuntimeError(
+            "connection failed: postgresql+asyncpg://socials:hunter2"
+            "@db.railway.internal:5432/railway"
+        )
+    )
+
+    posted = slack.post["text"]
+    assert "hunter2" not in posted
+
+
+async def test_the_rest_of_the_error_survives_redaction(brief_run, slack):
+    """Redaction that ate the message would trade one unusable report for another.
+
+    The host and database are what tell an operator *which* database refused
+    them, and neither is a secret.
+    """
+    await brief_run(
+        RuntimeError(
+            "connection failed: postgresql+asyncpg://socials:hunter2"
+            "@db.railway.internal:5432/railway"
+        )
+    )
+
+    posted = slack.post["text"]
+    assert "db.railway.internal" in posted
+    assert "socials" in posted
+    assert "RuntimeError" in posted
+
+
+async def test_an_ordinary_error_is_not_mangled(brief_run, slack):
+    """Nothing that looks like a URL, nothing to redact."""
+    await brief_run(RuntimeError("the model returned no content"))
+
+    assert "the model returned no content" in slack.post["text"]
+
+
+# --- the same mention arriving twice -------------------------------------------
+#
+# `ack()` goes first, which covers the ordinary Events API retry. It does not
+# cover a Socket Mode reconnect redelivering what was already in flight. Two
+# runs for one mention is two web searches, two model loops and two drafts in
+# front of one reviewer -- and `_running`, which stops exactly that for the
+# scheduler, is not consulted on this path.
+
+
+@pytest.fixture
+def deduped(monkeypatch):
+    """A private seen-set, so one test's event ids cannot satisfy the next."""
+    fresh: "handlers.OrderedDict[str, None]" = handlers.OrderedDict()
+    monkeypatch.setattr(handlers, "_seen", fresh)
+    return fresh
+
+
+async def test_a_redelivered_mention_starts_only_one_run(mention, monkeypatch, deduped):
+    import asyncio
+
+    started: list[str] = []
+
+    async def fake_brief_run(brand, **_kwargs):
+        started.append(brand.slug)
+
+    monkeypatch.setattr(handlers, "brief_run", fake_brief_run)
+    event = {"channel": "C0DEREKT", "event_ts": "1726000000.001"}
+
+    await handlers.on_brief(ack, event)
+    await handlers.on_brief(ack, dict(event))
+    await asyncio.gather(*tuple(handlers._tasks))
+
+    assert started == ["derekt"]
+
+
+async def test_two_genuine_mentions_both_run(mention, monkeypatch, deduped):
+    """Deduplication must not become a rate limit: asking twice is allowed."""
+    import asyncio
+
+    started: list[str] = []
+
+    async def fake_brief_run(brand, **_kwargs):
+        started.append(brand.slug)
+
+    monkeypatch.setattr(handlers, "brief_run", fake_brief_run)
+
+    await handlers.on_brief(ack, {"channel": "C0DEREKT", "event_ts": "1726000000.001"})
+    await handlers.on_brief(ack, {"channel": "C0DEREKT", "event_ts": "1726000000.002"})
+    await asyncio.gather(*tuple(handlers._tasks))
+
+    assert started == ["derekt", "derekt"]
+
+
+async def test_an_event_with_no_id_is_run_rather_than_dropped(
+    mention, monkeypatch, deduped
+):
+    """Nothing to dedupe on. Running a mention twice is a wasted search;
+    dropping one is a mention that silently did nothing, which is worse."""
+    import asyncio
+
+    started: list[str] = []
+
+    async def fake_brief_run(brand, **_kwargs):
+        started.append(brand.slug)
+
+    monkeypatch.setattr(handlers, "brief_run", fake_brief_run)
+
+    await handlers.on_brief(ack, {"channel": "C0DEREKT"})
+    await handlers.on_brief(ack, {"channel": "C0DEREKT"})
+    await asyncio.gather(*tuple(handlers._tasks))
+
+    assert started == ["derekt", "derekt"]
+
+
+async def test_the_seen_set_does_not_grow_without_bound(mention, monkeypatch, deduped):
+    """A long-lived listener sees a lot of mentions; this must not be a leak."""
+    import asyncio
+
+    async def fake_brief_run(brand, **_kwargs):
+        pass
+
+    monkeypatch.setattr(handlers, "brief_run", fake_brief_run)
+
+    for nth in range(handlers.SEEN_LIMIT + 50):
+        await handlers.on_brief(ack, {"channel": "C0DEREKT", "event_ts": f"{nth}.0"})
+    await asyncio.gather(*tuple(handlers._tasks))
+
+    assert len(deduped) <= handlers.SEEN_LIMIT

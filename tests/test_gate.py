@@ -543,3 +543,94 @@ async def test_a_revision_replaces_the_card_rather_than_adding_one(
     (variant,) = await rows(PostVariant)
     assert media.variant_id == variant.id
     assert variant.media[0]["hook"] == "Sharper hook"
+
+
+# --- a renderer that keeps failing --------------------------------------------
+#
+# FR-7 hands a render failure back to the model as a tool result, and the model
+# rewrites the card copy. That loop is right for the failure it was designed
+# around -- a hook four words too long, fixed on the second attempt.
+#
+# It is unbounded, though, and the failure that matters on a new deployment is
+# not a long hook: it is a Chromium that cannot start at all, which fails
+# identically however the copy is rewritten. `MAX_REVISIONS` bounds a reviewer
+# who keeps rejecting; nothing bounded this, so the model rewrote a caption
+# against a browser that was never going to run, once per recursion step, until
+# LangGraph stopped it.
+
+
+async def test_repeated_render_failures_stop_asking_the_model_to_retry(
+    draft_id, reviewer, renderer
+):
+    """The cap the reviewer's rejections already have, applied to the renderer."""
+    revisions: list[str] = []
+
+    for _ in range(main.MAX_REVISIONS):
+        renderer.will_fail(RenderFailed("Chromium failed to launch"))
+        decision = await gate(
+            draft_id, submission(hook="a hook"), revisions=revisions, brand=THEMED
+        )
+        assert decision["type"] == "reject"
+
+    renderer.will_fail(RenderFailed("Chromium failed to launch"))
+    final = await gate(
+        draft_id, submission(hook="a hook"), revisions=revisions, brand=THEMED
+    )
+
+    assert final["type"] == "reject"
+    assert "again" not in final["message"].lower() or "without" in final["message"].lower()
+
+
+async def test_the_post_is_salvaged_as_text_rather_than_abandoned(
+    draft_id, reviewer, renderer
+):
+    """A broken renderer is not a reason to lose the caption.
+
+    The words were fine; only the graphic could not be drawn. So the last word
+    to the model is "submit this without a hook", not "give up" -- a text post
+    is a worse post than an illustrated one and a much better one than nothing.
+    """
+    revisions = ["r"] * main.MAX_REVISIONS
+    renderer.will_fail(RenderFailed("Chromium failed to launch"))
+
+    decision = await gate(
+        draft_id, submission(hook="a hook"), revisions=revisions, brand=THEMED
+    )
+
+    assert decision["type"] == "reject"
+    assert "hook" in decision["message"]
+    assert "text" in decision["message"].lower()
+
+
+async def test_a_render_failure_still_gets_its_first_few_retries(
+    draft_id, reviewer, renderer
+):
+    """The hook that is four words too long must still be fixable.
+
+    Capping at zero would trade a runaway loop for a feature nobody asked to
+    lose -- FR-7's whole point is that the model rewrites copy the renderer
+    rejected.
+    """
+    revisions: list[str] = []
+    renderer.will_fail(RenderFailed("Hook is 61 characters; 42 is the most that fits"))
+
+    decision = await gate(
+        draft_id, submission(hook="x" * 61), revisions=revisions, brand=THEMED
+    )
+
+    assert decision["type"] == "reject"
+    assert "42 is the most that fits" in decision["message"]
+    assert "call submit_for_approval again" in decision["message"]
+
+
+async def test_a_render_failure_spends_the_same_budget_as_a_rejection(
+    draft_id, reviewer, renderer
+):
+    """One budget, not two. What is being bounded is how many times this run
+    may go back to the model, whoever asked it to."""
+    revisions: list[str] = []
+    renderer.will_fail(RenderFailed("Chromium failed to launch"))
+
+    await gate(draft_id, submission(hook="a hook"), revisions=revisions, brand=THEMED)
+
+    assert len(revisions) == 1

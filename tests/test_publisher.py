@@ -273,3 +273,78 @@ def test_the_advertised_inventory_is_the_registry_that_backs_it():
     httpx and a Graph client into a process that only wanted to know what it
     could target."""
     assert set(publisher._PUBLISHERS) == PUBLISHABLE_PLATFORMS
+
+
+# --- the kill switch on a platform with no filesystem ------------------------
+#
+# FR-15 says publishing can be halted without a deploy, and a file is the right
+# lever on a host you can reach: it needs no restart, and it works when the
+# reason you are reaching for it is that the database is unwell.
+#
+# It is not a lever at all on Railway. There is no shell to create the file in,
+# and the filesystem is ephemeral, so anything written there is gone at the next
+# redeploy. The argument the file was chosen for -- "a variable needs a restart"
+# -- inverts exactly: setting a variable is the one-click operation and touching
+# a file is the impossible one. So both spellings work, and the deployment
+# decides which is the convenient one.
+
+
+async def test_an_environment_variable_halts_publishing(monkeypatch, tmp_path):
+    monkeypatch.setattr(publisher, "KILL_SWITCH", tmp_path / "absent")
+    monkeypatch.setenv("PAUSE_PUBLISHING", "1")
+
+    assert publisher.publishing_paused() is True
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+async def test_the_usual_ways_of_writing_yes_all_work(monkeypatch, tmp_path, value):
+    """An operator reaching for this is in a hurry and will type whatever."""
+    monkeypatch.setattr(publisher, "KILL_SWITCH", tmp_path / "absent")
+    monkeypatch.setenv("PAUSE_PUBLISHING", value)
+
+    assert publisher.publishing_paused() is True
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "no", "off"])
+async def test_a_variable_that_says_no_does_not_halt_publishing(
+    monkeypatch, tmp_path, value
+):
+    """`PAUSE_PUBLISHING=false` must not halt publishing.
+
+    The failure mode worth avoiding: an operator sets it to `false` believing
+    they have turned the switch off, and silently stops the queue instead.
+    """
+    monkeypatch.setattr(publisher, "KILL_SWITCH", tmp_path / "absent")
+    monkeypatch.setenv("PAUSE_PUBLISHING", value)
+
+    assert publisher.publishing_paused() is False
+
+
+async def test_the_file_still_halts_publishing(monkeypatch, tmp_path):
+    """The local lever keeps working; this adds a spelling rather than replacing one."""
+    switch = tmp_path / "PAUSE_PUBLISHING"
+    switch.touch()
+    monkeypatch.setattr(publisher, "KILL_SWITCH", switch)
+    monkeypatch.delenv("PAUSE_PUBLISHING", raising=False)
+
+    assert publisher.publishing_paused() is True
+
+
+async def test_neither_lever_set_means_publishing_continues(monkeypatch, tmp_path):
+    monkeypatch.setattr(publisher, "KILL_SWITCH", tmp_path / "absent")
+    monkeypatch.delenv("PAUSE_PUBLISHING", raising=False)
+
+    assert publisher.publishing_paused() is False
+
+
+async def test_run_once_honours_the_variable(monkeypatch, tmp_path):
+    """The switch has to be read by the cycle, not merely be readable."""
+    monkeypatch.setattr(publisher, "KILL_SWITCH", tmp_path / "absent")
+    monkeypatch.setenv("PAUSE_PUBLISHING", "1")
+
+    async def unreachable(*_args, **_kwargs):
+        raise AssertionError("a paused publisher must not claim anything")
+
+    monkeypatch.setattr(publisher, "transaction", unreachable)
+
+    assert await publisher.run_once(client=None) == 0

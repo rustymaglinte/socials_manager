@@ -13,6 +13,7 @@ under `app.store` needed a DATABASE_URL. `settings()` is called, cached, and
 clearable -- the same shape as `load_brand`.
 """
 
+import re
 from functools import lru_cache
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -28,6 +29,29 @@ ASYNC_DRIVER = "postgresql+asyncpg"
 # not accepted it since 1.4, and the resulting error names neither the variable
 # nor the fix.
 _SYNONYMS = ("postgresql://", "postgres://")
+
+# A URL's password, wherever one turns up in free text. `Settings.
+# redacted_database_url` handles the DSN this module owns; this handles the
+# same secret arriving inside somebody else's sentence -- which is where it
+# actually shows up, because a driver that cannot connect puts the whole
+# connection string into its exception, and that exception gets logged and,
+# in `app.transports.slack_approval.handlers`, posted into a channel.
+#
+# Deliberately narrow: it matches `scheme://user:password@` and replaces only
+# the password. The host and database name are what tell an operator which
+# database refused them, and neither is a secret -- redaction that ate those
+# would trade one unusable error report for another.
+_CREDENTIALS = re.compile(r"(?P<prefix>[a-zA-Z][\w+.-]*://[^\s:/@]+):[^\s@]*@")
+
+
+def redact(text: str) -> str:
+    """Mask any URL password in `text`. Safe to call on anything.
+
+    Used on the way out to somewhere a person can read: a log line, a Slack
+    message. C-5 is about where a connection string ends up, not about which
+    variable it came from, so it applies to a string that merely contains one.
+    """
+    return _CREDENTIALS.sub(r"\g<prefix>:***@", text)
 
 
 def _asyncpg_tls(url: str) -> str:

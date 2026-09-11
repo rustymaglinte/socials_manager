@@ -61,13 +61,15 @@ def _no_leftover_runs():
 
 @pytest.fixture(autouse=True)
 def _no_kill_switch(monkeypatch, tmp_path):
-    """Point the switch at a path that does not exist.
+    """Neither spelling of the switch is on.
 
-    A developer who left a PAUSE_DRAFTING in the repo root while debugging
-    would otherwise turn every test in this file green for the wrong reason --
-    `tick` returns 0 before it evaluates anything.
+    A developer who left a PAUSE_DRAFTING file in the repo root while debugging
+    -- or the variable set in their shell -- would otherwise turn every test in
+    this file green for the wrong reason: `tick` returns 0 before it evaluates
+    anything at all.
     """
     monkeypatch.setattr(scheduler, "KILL_SWITCH", tmp_path / "absent")
+    monkeypatch.delenv(scheduler.PAUSE_VAR, raising=False)
 
 
 # --- which brands are on a timer at all ---------------------------------------
@@ -364,6 +366,33 @@ async def test_the_kill_switch_stops_drafting(fired, due, monkeypatch, tmp_path)
 
     assert await scheduler.tick([on_a_timer()], manila(2026, 9, 11, 11, 5)) == 0
     assert fired == []
+
+
+async def test_an_environment_variable_also_pauses_drafting(fired, due, monkeypatch):
+    """The spelling that works on a host you cannot put a file on.
+
+    Separate variable from the publisher's, because pausing new drafts while
+    approved posts keep going out is the common case -- the model is saying
+    something odd and the queue behind it is fine.
+    """
+    monkeypatch.setenv(scheduler.PAUSE_VAR, "1")
+
+    assert await scheduler.tick([on_a_timer()], manila(2026, 9, 11, 11, 5)) == 0
+    assert fired == []
+
+
+async def test_pause_drafting_set_to_false_does_not_pause_drafting(
+    fired, due, monkeypatch
+):
+    """The misreading with a cost: believing you turned the switch off."""
+    import asyncio
+
+    monkeypatch.setenv(scheduler.PAUSE_VAR, "false")
+
+    await scheduler.tick([on_a_timer()], manila(2026, 9, 11, 11, 5))
+    await asyncio.gather(*tuple(scheduler._tasks))
+
+    assert fired == ["pinoysing"]
 
 
 async def test_a_spawned_run_is_held_while_it_waits(fired, due):

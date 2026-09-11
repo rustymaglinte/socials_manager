@@ -17,7 +17,9 @@ waiter's wake-up need no cross-thread handoff.
 import asyncio
 import json
 import logging
+from collections import OrderedDict
 
+from app.config import redact
 from app.domain.brand import all_brands
 from app.domain.brand.context import BrandContext, BrandNotFound
 from app.transports.slack_approval import blocks
@@ -232,7 +234,13 @@ async def _report_failure(brand: BrandContext, error: Exception) -> None:
     Never raises. If Slack is what broke, this cannot work either, and letting
     it throw would replace a useful traceback in the log with a useless one.
     """
-    detail = f"{type(error).__name__}: {error}".strip()
+    # Redacted before it is truncated, and before it goes anywhere. The most
+    # likely failure here is a database that would not connect, and a driver
+    # that cannot connect puts the whole DSN -- password included -- into its
+    # exception text. `app.config` already treats that as a secret (C-5); this
+    # is the path where it arrives inside someone else's sentence rather than
+    # as the setting itself.
+    detail = redact(f"{type(error).__name__}: {error}".strip())
     if len(detail) > ERROR_MAX_CHARS:
         detail = detail[:ERROR_MAX_CHARS] + "..."
 
@@ -290,6 +298,37 @@ async def brief_run(brand: BrandContext, approval_timeout: int | None = None) ->
 # reason; this path simply did not, and the two must not disagree about it.
 _tasks: set[asyncio.Task] = set()
 
+# Mentions already handled, newest last. `ack()` runs before anything slow, so
+# the ordinary Events API retry never fires -- but a Socket Mode reconnect can
+# redeliver an event that was already in flight, and one mention handled twice
+# is two web searches, two model loops and two drafts in front of one reviewer.
+# `_running` stops precisely that for the scheduler; this path never consulted it.
+#
+# Bounded, because the listener is long-lived and an unbounded set of every
+# mention it ever saw is a leak with a slow fuse. A few hundred is far more than
+# a redelivery window and still nothing to hold.
+SEEN_LIMIT = 256
+_seen: OrderedDict[str, None] = OrderedDict()
+
+
+def _already_handled(event: dict) -> bool:
+    """Whether this exact mention has been acted on already.
+
+    An event with no id is treated as new. Running a mention twice costs a
+    search; dropping one leaves somebody looking at a channel where nothing
+    happened, which is the worse of the two failures.
+    """
+    key = event.get("event_ts") or event.get("ts") or ""
+    if not key:
+        return False
+    if key in _seen:
+        return True
+
+    _seen[key] = None
+    while len(_seen) > SEEN_LIMIT:
+        _seen.popitem(last=False)
+    return False
+
 
 async def _no_brand_here(channel: str) -> None:
     """Answer a mention from a channel nothing is bound to.
@@ -319,6 +358,10 @@ async def _no_brand_here(channel: str) -> None:
 async def on_brief(ack, event):
     await ack()
     channel = event["channel"]
+
+    if _already_handled(event):
+        logger.info("Ignoring a redelivered mention in %s", channel)
+        return
 
     try:
         brand = brand_for_channel_id(channel)
