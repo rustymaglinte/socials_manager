@@ -9,10 +9,18 @@ No socket is opened here. `start_listener` is only exercised on its validation
 path, which returns before any connection is attempted.
 """
 
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
 import pytest
 
 from app.domain.brand import BrandNotFound
 from app.transports.slack_approval import client
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
@@ -172,3 +180,84 @@ async def test_update_message_rewrites_in_place_with_a_text_fallback():
             "blocks": [{"type": "divider"}],
         }
     ]
+
+
+# --- importing the transport without credentials ------------------------------
+#
+# `AsyncApp` is built at module scope, because the handler decorators in
+# handlers.py register on it at import and there is nothing to register on
+# otherwise. Built from a token that might be None, slack_bolt raises out of the
+# import statement -- and an ImportError is the one failure with nowhere useful
+# to report itself: it happens before any of the machinery that would explain
+# it, and takes down every module that imports the transport on the way past.
+#
+# Which is the same mistake `app.agent.tools.web_search` made with its API key,
+# and which `app.config`'s docstring already names as the reason nothing there
+# is read at import. The validation itself does not move: `start_listener`
+# already refuses to run without the real tokens, and its message names them.
+#
+# A subprocess because conftest.py sets fake tokens before the first app.*
+# import -- it has to, which is itself the evidence.
+
+
+def _import_without_slack_tokens(source: str) -> subprocess.CompletedProcess:
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"}
+    }
+    environment["PYTHONPATH"] = str(REPO_ROOT)
+    return subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(source)],
+        capture_output=True,
+        text=True,
+        env=environment,
+        # A directory with no .env to fall back on: load_dotenv walks upwards.
+        cwd=REPO_ROOT.parent,
+        timeout=120,
+    )
+
+
+def test_the_transport_imports_without_a_bot_token():
+    """A missing token must not be an ImportError."""
+    result = _import_without_slack_tokens(
+        """
+        from app.transports.slack_approval import client, handlers
+        print("IMPORTED", client.app is not None, handlers.logger.name)
+        """
+    )
+    assert "IMPORTED True" in result.stdout, result.stderr
+
+
+def test_the_handlers_are_still_registered_without_a_token():
+    """The placeholder exists so the decorators have something to bind to.
+
+    An app built but not wired would import cleanly and then ignore every
+    click -- a worse failure than the one being fixed, because it looks fine.
+    """
+    result = _import_without_slack_tokens(
+        """
+        from app.transports.slack_approval import client, handlers  # noqa: F401
+        listeners = client.app._async_listeners
+        print("LISTENERS", len(listeners) > 0)
+        """
+    )
+    assert "LISTENERS True" in result.stdout, result.stderr
+
+
+def test_starting_the_listener_without_a_token_still_refuses_by_name():
+    """Deferred, not discarded. The check stays where it already was."""
+    result = _import_without_slack_tokens(
+        """
+        import asyncio
+        from app.transports.slack_approval import client
+
+        try:
+            asyncio.run(client.start_listener())
+        except RuntimeError as error:
+            print("REFUSED", error)
+        """
+    )
+    assert "REFUSED" in result.stdout, result.stderr
+    assert "SLACK_BOT_TOKEN" in result.stdout
+    assert "SLACK_APP_TOKEN" in result.stdout

@@ -19,6 +19,7 @@ on the Page.
 import base64
 import html
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -103,6 +104,34 @@ class PostCard:
 MAX_HOOK_CHARS = 42
 
 
+# What a CSS value is allowed to contain. Hex, `rgb(...)`, `hsl(...)`, a named
+# colour, a `var(--x)` -- letters, digits, and the punctuation those need.
+#
+# Notably absent: `;` and `}`, either of which ends the declaration it sits in
+# and starts something else. brand.yaml is trusted config, so this is not a hole
+# anybody can reach today; it is here because the hook, wordmark and tagline
+# beside it are all escaped and the palette was not, and that asymmetry is the
+# kind that gets copied the day a theme becomes settable from somewhere less
+# trusted.
+_CSS_VALUE = re.compile(r"^[#\w\s.,()%/+-]*$")
+
+
+def _colour(value: str, field: str) -> str:
+    """A palette entry, refused rather than sanitised if it is not one.
+
+    Refused because there is no safe repair: stripping the punctuation out of a
+    broken colour leaves a different colour, and a brand whose posts quietly
+    render in the wrong shade is worse off than one whose render fails with the
+    name of the field to fix.
+    """
+    if not _CSS_VALUE.match(value):
+        raise RenderFailed(
+            f"The theme's {field} is not a usable CSS colour: {value!r}. "
+            f"Use a hex code, rgb(), hsl() or a colour name in brand.yaml."
+        )
+    return value
+
+
 def _font_css() -> str:
     """@font-face rules with the files inlined.
 
@@ -151,9 +180,11 @@ def build_html(
         "__SIZE__": str(size),
         "__FONTS__": _font_css(),
         "__TEMPLATE__": template,
-        "__GROUND__": theme.ground,
-        "__ACCENT__": theme.accent,
-        "__MUTED__": theme.muted,
+        # Checked rather than escaped: these land in CSS, where the escaping
+        # that protects the text below would be meaningless. See `_colour`.
+        "__GROUND__": _colour(theme.ground, "ground"),
+        "__ACCENT__": _colour(theme.accent, "accent"),
+        "__MUTED__": _colour(theme.muted, "muted"),
         "__WORDMARK__": html.escape(theme.wordmark),
         "__TAGLINE__": html.escape(theme.tagline),
         "__HOOK__": hook,

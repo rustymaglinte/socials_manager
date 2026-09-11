@@ -73,10 +73,16 @@ be visible during UAT.
   they are rows, and the publisher is a separate process. Deploy outside slot
   windows (PinoySing drafts 09:00–17:00 Asia/Manila, every 2h) until the
   Postgres checkpointer replaces it.
-- **The kill switches do not work as deployed.** `PAUSE_PUBLISHING` and
-  `PAUSE_DRAFTING` are files, and the filesystem is ephemeral. Point
-  `PUBLISHING_KILL_SWITCH` / `DRAFTING_KILL_SWITCH` at a path on a mounted
-  volume if you want FR-15's lever to survive a redeploy.
+- **Use the variable, not the file, to halt things.** FR-15's switch has two
+  spellings. The file (`PAUSE_PUBLISHING` / `PAUSE_DRAFTING`) is the local
+  lever and does not work here — there is no shell to create it in and the
+  filesystem is ephemeral. On Railway set the variable of the same name to `1`
+  on the service you want to stop; it is read every cycle, so it takes effect
+  within one poll without a restart. `PAUSE_PUBLISHING=false` deliberately does
+  **not** pause, so setting it to `false` to "turn it off" does what you meant.
+
+  The two are separate on purpose: pausing new drafts while approved posts keep
+  going out is the common case.
 - **Anyone in a brand's Slack channel can approve a post.** The approver's id is
   recorded but never checked. Acceptable in a private UAT channel; close it
   before the live Page id goes back into `brands/pinoysing/brand.yaml`.

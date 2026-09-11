@@ -18,7 +18,7 @@ from app.domain.brand.loader import all_brands
 from app.domain.states import APPROVING_VERDICTS, Verdict
 from app.graphics import Card, RenderFailed, render_card, supports_graphics
 from app.llm.factory import agent_creation
-from app.store.engine import transaction
+from app.store.engine import dispose, transaction
 from app.store.repositories import (
     approving_verdict,
     attach_card,
@@ -438,20 +438,34 @@ async def serve() -> None:
         await asyncio.Event().wait()  # forever, until Ctrl+C / SIGTERM
     finally:
         await stop_listener()
+        # As `app.workers.publisher` and `app.scheduler` both do on their way
+        # out. This entry point did not, which made the one process a developer
+        # runs by hand the one that left its connections behind.
+        await dispose()
 
 
 async def one_shot(brand: BrandContext) -> None:
-    """Dev shape: brief one brand, print the answer, exit."""
-    brief, angle = await brief_for(brand)
+    """Dev shape: brief one brand, print the answer, exit.
+
+    The brief is inside the `try` rather than above it: it opens a transaction
+    of its own to read recent angles and topics, so a failure there is a failure
+    that has already taken a connection out of the pool.
+    """
     try:
+        brief, angle = await brief_for(brand)
         print(await run(brief, brand, angle=angle))
     finally:
         await stop_listener()
+        await dispose()
 
 
 async def main() -> None:
     if len(sys.argv) > 1:
-        await one_shot(load_brand(sys.argv[1]))
+        # `brand_from_argv`, not `load_brand`: it turns a mistyped slug into a
+        # sentence naming the brands that exist, which is the whole reason it
+        # was written. Calling `load_brand` here left that dead and handed the
+        # operator a raw BrandNotFound traceback instead.
+        await one_shot(brand_from_argv())
     else:
         await serve()
 

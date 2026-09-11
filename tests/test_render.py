@@ -286,3 +286,58 @@ async def test_rendering_produces_a_square_png():
     # IHDR width and height are big-endian uint32 at a fixed offset.
     width, height = struct.unpack(">II", png[16:24])
     assert (width, height) == (size, size)
+
+
+# --- what a brand.yaml may put into the stylesheet ----------------------------
+#
+# Colours are substituted straight into CSS while the wordmark, tagline and hook
+# beside them are escaped. brand.yaml is trusted config, so this is not
+# exploitable today -- it is flagged because the asymmetry is the kind that gets
+# copied. The palette is the field most likely to become settable from somewhere
+# less trusted (a brand admin page, a theme picker), and the escaping is cheaper
+# to add now than to remember later.
+
+
+@pytest.mark.parametrize("field", ["ground", "accent", "muted"])
+def test_a_colour_cannot_close_its_own_declaration(field):
+    """A `;` or `}` in a colour would end the rule and start a new one.
+
+    Refused rather than stripped, and the difference matters: sanitising a
+    broken colour leaves a *different* colour, so the post renders in the wrong
+    shade and nobody finds out until it is on the Page. A render that fails
+    naming the field is the better outcome -- FR-7's argument, applied to the
+    palette instead of the copy.
+    """
+    theme = Theme(
+        **{
+            **{
+                "ground": "#111",
+                "accent": "#222",
+                "muted": "#333",
+                "wordmark": "W",
+                "tagline": "t",
+            },
+            field: "red; } body { display: none } .x {",
+        }
+    )
+
+    with pytest.raises(RenderFailed, match=field):
+        build_html(template="marquee", card=PostCard(hook="Kanta"), theme=theme)
+
+
+@pytest.mark.parametrize(
+    "colour", ["#3A3A38", "#F5D24E", "rgb(58, 58, 56)", "hsl(45 88% 63%)"]
+)
+def test_the_ways_a_palette_is_actually_written_still_work(colour):
+    """Sanitising must not cost the brand its own colours.
+
+    brand.yaml uses hex today, but `rgb()` and `hsl()` are ordinary CSS and a
+    rule that rejected them would be a worse bug than the one being fixed.
+    """
+    theme = Theme(
+        ground=colour, accent=colour, muted=colour, wordmark="W", tagline="t"
+    )
+
+    page = build_html(template="marquee", card=PostCard(hook="Kanta"), theme=theme)
+
+    assert colour in page

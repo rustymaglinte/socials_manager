@@ -23,7 +23,25 @@ APP_TOKEN = os.getenv("SLACK_APP_TOKEN")  # xapp- : opens the WebSocket
 
 DEFAULT_TIMEOUT_SECONDS = 600
 
-app = AsyncApp(token=BOT_TOKEN)
+# Stands in for a token that is not set yet, so this module imports either way.
+#
+# The Bolt app has to exist at import: the decorators in handlers.py register on
+# it as they are read, and there is nothing to register on otherwise. Built
+# straight from a `None` token, slack_bolt raises out of the import statement --
+# and an ImportError is the one failure with nowhere useful to report itself. It
+# fires before any of the machinery that could explain it, and takes every
+# module importing the transport down on the way past, so what an operator sees
+# is a traceback through an import chain rather than the name of the variable
+# they missed.
+#
+# Nothing is deferred except the complaint. `start_listener` already refuses to
+# run without the real tokens and its message names both of them; this only
+# stops the complaint arriving as an ImportError three modules away from the
+# problem. Constructing the app performs no network call, and the placeholder
+# cannot reach Slack: every path to an API call goes through `start_listener`.
+_UNSET_TOKEN = "xoxb-not-configured"  # noqa: S105 -- a placeholder, not a secret
+
+app = AsyncApp(token=BOT_TOKEN or _UNSET_TOKEN)
 
 _handler: AsyncSocketModeHandler | None = None
 

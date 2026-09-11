@@ -261,3 +261,82 @@ async def test_a_brand_with_nowhere_to_post_fails_before_anything_costs_money(
 
     assert agent.configs == [], "the model must not be invoked"
     assert started == [], "the listener must not be opened"
+
+
+# --- the entry points ----------------------------------------------------------
+#
+# `brand_from_argv` was written to turn a mistyped brand into a sentence naming
+# the ones that exist, and then nothing called it: `main` reached for
+# `load_brand` directly, so the friendly message was dead code and what an
+# operator actually got was a raw BrandNotFound traceback.
+#
+# The pool is the other half. `app.workers.publisher` and `app.scheduler` both
+# dispose on the way out; `app.main` did not, so the one entry point a developer
+# runs by hand was the one that leaked its connections.
+
+
+def test_a_mistyped_brand_names_the_ones_that_exist(monkeypatch, real_brands):
+    monkeypatch.setattr(main.sys, "argv", ["app.main", "pinoysingg"])
+
+    with pytest.raises(SystemExit) as caught:
+        main.brand_from_argv()
+
+    assert "pinoysingg" in str(caught.value)
+
+
+def test_no_argument_prints_the_usage_and_the_brands(monkeypatch, real_brands):
+    monkeypatch.setattr(main.sys, "argv", ["app.main"])
+
+    with pytest.raises(SystemExit) as caught:
+        main.brand_from_argv()
+
+    message = str(caught.value)
+    assert "Usage" in message
+    assert "pinoysing" in message
+
+
+async def test_a_one_shot_run_disposes_its_connection_pool(wired, monkeypatch):
+    """Both workers dispose on the way out; the hand-run entry point did not."""
+    wired(["done"])
+    disposed = []
+
+    async def fake_dispose():
+        disposed.append(True)
+
+    async def fake_stop():
+        pass
+
+    async def fake_brief_for(_brand):
+        return "a brief", "trivia"
+
+    monkeypatch.setattr(main, "dispose", fake_dispose)
+    monkeypatch.setattr(main, "stop_listener", fake_stop)
+    monkeypatch.setattr(main, "brief_for", fake_brief_for)
+
+    await main.one_shot(BRAND)
+
+    assert disposed == [True]
+
+
+async def test_the_pool_is_disposed_even_when_the_run_fails(wired, monkeypatch):
+    """A crash is exactly when the process is about to exit, so it is exactly
+    when the connections need giving back."""
+    disposed = []
+
+    async def fake_dispose():
+        disposed.append(True)
+
+    async def fake_stop():
+        pass
+
+    async def exploding_brief_for(_brand):
+        raise RuntimeError("the database is down")
+
+    monkeypatch.setattr(main, "dispose", fake_dispose)
+    monkeypatch.setattr(main, "stop_listener", fake_stop)
+    monkeypatch.setattr(main, "brief_for", exploding_brief_for)
+
+    with pytest.raises(RuntimeError):
+        await main.one_shot(BRAND)
+
+    assert disposed == [True]
