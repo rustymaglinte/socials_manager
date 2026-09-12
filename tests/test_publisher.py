@@ -14,7 +14,7 @@ import pytest
 
 from app.credentials import CredentialsMissing
 from app.domain.brand import BrandNotFound
-from app.platforms import PUBLISHABLE_PLATFORMS
+from app.platforms import PUBLISHABLE_PLATFORMS, facebook
 from app.platforms.facebook import PublishedPost, PublishFailed
 from app.store.repositories import DuePost
 from app.store.repositories.schedules import (
@@ -348,3 +348,52 @@ async def test_run_once_honours_the_variable(monkeypatch, tmp_path):
     monkeypatch.setattr(publisher, "transaction", unreachable)
 
     assert await publisher.run_once(client=None) == 0
+
+
+# --- the client every publish actually runs on ------------------------------
+#
+# `serve` and `--once` each built their own `httpx.AsyncClient()`, with no
+# timeout, and handed it to the adapter for every post. httpx defaults to five
+# seconds, and `_send` only applied the adapter's own budget when it built the
+# client itself -- so the 90 seconds `publish_photo` declares never applied to a
+# single real upload. One factory now, because two call sites that must not
+# drift is exactly what the rest of this worker keeps in one place.
+
+
+async def test_the_shared_client_carries_the_upload_budget():
+    """Defence in depth behind the adapter's per-request timeout: whatever a
+    caller forgets to pass, the pool itself must not be on five seconds."""
+    client = publisher.graph_client()
+    try:
+        assert client.timeout.read == facebook.UPLOAD_TIMEOUT_SECONDS
+        assert client.timeout.connect == facebook.UPLOAD_TIMEOUT_SECONDS
+    finally:
+        await client.aclose()
+
+
+async def test_a_single_cycle_publishes_on_that_same_client(monkeypatch):
+    """`--once` is a separate call site, and the one a cron runs. It must not
+    quietly go back to building a bare client of its own."""
+    built: list[httpx.AsyncClient] = []
+    used: list[httpx.AsyncClient] = []
+
+    def factory() -> httpx.AsyncClient:
+        client = httpx.AsyncClient(timeout=facebook.UPLOAD_TIMEOUT_SECONDS)
+        built.append(client)
+        return client
+
+    async def capture(client, *, limit=0):
+        used.append(client)
+        return 0
+
+    async def nothing() -> None:
+        pass
+
+    monkeypatch.setattr(publisher, "graph_client", factory)
+    monkeypatch.setattr(publisher, "run_once", capture)
+    monkeypatch.setattr(publisher, "register_brands", nothing)
+    monkeypatch.setattr(publisher, "dispose", nothing)
+
+    await publisher.main(["--once"])
+
+    assert used == built, "the cycle ran on a client the factory did not build"

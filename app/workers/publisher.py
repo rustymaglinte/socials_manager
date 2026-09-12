@@ -36,7 +36,11 @@ from dotenv import load_dotenv
 
 from app.credentials import CredentialsMissing, credentials_for
 from app.domain.brand import BrandNotFound, all_brands, load_brand
-from app.platforms.facebook import PublishedPost, PublishFailed
+from app.platforms.facebook import (
+    UPLOAD_TIMEOUT_SECONDS,
+    PublishedPost,
+    PublishFailed,
+)
 from app.platforms.facebook import publish as facebook_publish
 from app.platforms.facebook import publish_photo as facebook_publish_photo
 from app.store.engine import dispose, transaction
@@ -124,6 +128,23 @@ def publishing_paused() -> bool:
 def worker_name() -> str:
     """Who holds a claim. Recorded so a stale one can be traced to a process."""
     return f"{socket.gethostname()}:{os.getpid()}"
+
+
+def graph_client() -> httpx.AsyncClient:
+    """The client every publish runs on, however this process was started.
+
+    One factory rather than a literal at each entry point, because `serve` and
+    `--once` must not disagree about it: both build a client once and hand it to
+    the adapter for every post in the batch.
+
+    The timeout is set here as well as per request. The adapter already passes
+    its own budget on each call, so this is the backstop rather than the
+    mechanism -- but a bare `httpx.AsyncClient()` defaults to five seconds, and
+    five seconds is not enough to push a megabyte of PNG to Meta. That is worth
+    stating in the one place the pool is built, so the next caller to forget an
+    argument inherits the upload budget instead of the default.
+    """
+    return httpx.AsyncClient(timeout=UPLOAD_TIMEOUT_SECONDS)
 
 
 async def _publish_facebook(post, client: httpx.AsyncClient) -> PublishedPost:
@@ -287,7 +308,7 @@ async def serve() -> None:
     logger.info("Publisher %s polling every %ds", worker_name(), POLL_SECONDS)
     # One client for the life of the worker: connections to Graph are reused
     # across cycles rather than renegotiating TLS for every post.
-    async with httpx.AsyncClient() as client:
+    async with graph_client() as client:
         while True:
             try:
                 await run_once(client)
@@ -321,7 +342,7 @@ async def main(argv: list[str] | None = None) -> int:
     try:
         await register_brands()
         if args.once:
-            async with httpx.AsyncClient() as client:
+            async with graph_client() as client:
                 published = await run_once(client, limit=args.limit)
             logger.info("Published %d post(s)", published)
         else:

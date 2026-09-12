@@ -158,18 +158,33 @@ async def _send(
     closing a client we opened even when the call fails, turning a Graph error
     body into a classified PublishFailed -- are identical, and a second copy is
     a second place for them to drift.
+
+    `timeout` is passed per request, not only to a client we build. The
+    publisher hands in a pooled client for every real post, so setting it in the
+    constructor alone left each of those on httpx's five-second default -- and
+    the 90 seconds an upload is given existed only in this file's argument list.
     """
     owned = client is None
     http = client or httpx.AsyncClient(timeout=timeout)
     try:
-        response = await http.post(url, data=data, files=files, headers=headers)
+        response = await http.post(
+            url, data=data, files=files, headers=headers, timeout=timeout
+        )
     except httpx.RequestError as error:
-        # Marked retryable, but honestly so: a connect failure certainly posted
-        # nothing, while a read timeout may have landed and simply lost the
-        # answer. Nothing here can tell those apart, which is the other half of
-        # why dedupe belongs in the store rather than in the adapter (FR-13).
+        # Split by whether the request can have reached Meta at all, because
+        # that decides whether the publisher may send it again.
+        #
+        # A connection that never opened certainly posted nothing, so it is
+        # weather and worth retrying. Anything raised after the request went out
+        # -- a read timeout above all -- is *unknown*: Graph may have published
+        # the post and lost the answer on the way back, and there is no
+        # idempotency key for a feed post to settle it with. Retrying that is
+        # how one approval becomes two posts on the Page, so it is reported as
+        # not retryable and stops at FAILED, where a human (or FR-13's
+        # reconciliation) checks the Page before anything is sent again.
+        never_sent = isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout))
         raise PublishFailed(
-            f"Could not reach the Graph API: {error}", retryable=True
+            f"Could not reach the Graph API: {error}", retryable=never_sent
         ) from error
     finally:
         if owned:

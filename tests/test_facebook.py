@@ -22,6 +22,8 @@ import pytest
 
 from app.platforms.facebook import (
     API_VERSION,
+    DEFAULT_TIMEOUT_SECONDS,
+    UPLOAD_TIMEOUT_SECONDS,
     PublishedPost,
     PublishFailed,
     publish,
@@ -270,6 +272,58 @@ async def test_never_reaching_the_api_is_retryable(graph):
     assert caught.value.retryable is True
 
 
+async def test_failing_to_open_the_connection_is_retryable(graph):
+    """The other half of "certainly posted nothing": a connect timeout expires
+    before a byte of the request is sent, so there is nothing on the Page."""
+    graph.reply = httpx.ConnectTimeout("timed out connecting")
+
+    with pytest.raises(PublishFailed) as caught:
+        await post(graph)
+
+    assert caught.value.retryable is True
+
+
+async def test_a_response_lost_after_the_request_was_sent_is_not_retryable(graph):
+    """The one classification that decides whether a Page gets two copies.
+
+    A read timeout means the request left this process and Graph never answered
+    -- which is indistinguishable from Graph having posted it and the answer
+    going missing. Graph has no idempotency key for feed posts, so retrying that
+    is how one approval becomes two posts. It stops at FAILED instead, where a
+    human checks the Page before anything is sent again.
+    """
+    graph.reply = httpx.ReadTimeout("timed out waiting for Graph")
+
+    with pytest.raises(PublishFailed, match="Could not reach the Graph API") as caught:
+        await post(graph)
+
+    assert caught.value.retryable is False
+
+
+# --- the timeout budget -----------------------------------------------------
+#
+# The adapter declares two budgets -- 30 seconds for a feed post, 90 for an
+# image upload -- and both were dead in production. `_send` applied `timeout`
+# only when it *built* the client, and the publisher always passes its own, so
+# every real call inherited httpx's 5-second default instead. A megabyte of PNG
+# to Meta does not fit in five seconds, and the timeout it raised was then
+# classified retryable: the post landed, the answer was lost, and the queue sent
+# it again.
+#
+# Every other test in this file supplies a client, which is exactly the branch
+# that discarded the budget -- which is why none of them caught it.
+
+
+def read_timeout_of(request: httpx.Request) -> float:
+    return request.extensions["timeout"]["read"]
+
+
+async def test_a_caller_supplied_client_still_gets_the_feed_budget(graph):
+    await post(graph)
+
+    assert read_timeout_of(graph.sent) == DEFAULT_TIMEOUT_SECONDS
+
+
 # --- guards, none of which should cost a request ----------------------------
 
 
@@ -344,6 +398,17 @@ async def test_an_image_goes_to_the_photos_edge_not_the_feed(graph):
     await photo(graph)
 
     assert str(graph.sent.url) == f"https://graph.facebook.com/v25.0/{PAGE_ID}/photos"
+
+
+async def test_an_upload_gets_the_longer_budget_even_on_a_supplied_client(graph):
+    """The 90 seconds exist because a megabyte reaches Manila slowly. This is
+    the call that was actually running on five, and the one whose timeout became
+    a duplicate post -- see "the timeout budget" above."""
+    graph.reply = httpx.Response(200, json={"id": "999", "post_id": f"{PAGE_ID}_5678"})
+
+    await photo(graph)
+
+    assert read_timeout_of(graph.sent) == UPLOAD_TIMEOUT_SECONDS
 
 
 async def test_the_image_is_uploaded_as_multipart(graph):
