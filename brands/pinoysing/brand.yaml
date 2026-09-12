@@ -9,8 +9,8 @@ timezone: "Asia/Manila"
 
 accounts:
   - platform: facebook # Page, via Graph API
-    # page_id: "111111111111111" #live PinoySing page
-    page_id: "2222222222222222" #test facebook page
+    page_id: "111111111111111" #live PinoySing page
+    # page_id: "2222222222222222" #test facebook page
     enabled: true
   - platform: x
     handle: "TODO"
