@@ -20,11 +20,14 @@ approver identity. The agent cannot bypass that — it's a foreign key, not a pr
 
 ## Brands
 
-| Brand | Platforms | Tier |
-|---|---|---|
-| personal | LinkedIn | personal |
-| pinoysing | FB Page, X, YouTube | brand |
-| derekt | FB Page, X, YouTube | brand (strict policy) |
+| Brand | Platforms declared | Tier | Publishing today |
+|---|---|---|---|
+| personal | LinkedIn | personal | nothing — handle is `TODO`, no LinkedIn adapter |
+| pinoysing | FB Page, X, YouTube | brand | Facebook Page (live) |
+| derekt | FB Page, X, YouTube | brand (strict policy) | nothing — every id is `TODO` |
+
+Facebook is the only adapter (`PUBLISHABLE_PLATFORMS`), so X and YouTube accounts
+are declared but never briefed.
 
 Brand is **runtime context, not a tool argument** — it resolves from the Slack
 channel before the model is invoked. A thread in `#social-pinoysing` cannot name a
@@ -37,6 +40,8 @@ Enforced by `lint-imports` (see `pyproject.toml`), not by convention:
 - `app/domain/` imports no framework. Not LangChain, not Slack, not a web framework.
 - `app/platforms/` never learns what a brand is. An `if brand.slug == ...`
   inside an adapter is a bug; per-brand rules belong in a policy profile.
+- `app/render/` is brand-blind for the same reason: it takes colours and
+  strings, and `app/graphics/` decides whose they are.
 - `app/workers/publisher.py` never talks to the model.
 - `app/llm/` is the only package that may import a provider SDK. Everything
   else takes a `BaseChatModel` and asks `capabilities_for()` if it must branch.
@@ -50,14 +55,22 @@ brands/          config data, no Python — voice, cadence, policy, accounts
 app/
   transports/    Slack (Socket Mode). Swappable — chat is transport, not system.
   api/           OAuth redirect receiver — stdlib, on demand      (planned)
-  agent/         create_agent + middleware stack
+  agent/         create_agent + HITL middleware, brief, tools (web_search,
+                 submit_for_approval); in-memory checkpointer
   llm/           provider boundary — the ONLY place that names a provider
                  (factory.py only; capabilities/roles/middleware  (planned))
-  domain/        models, state machine, policy engine  <- framework-free
+  domain/        brand loading, state machine  <- framework-free
+                 (policy engine                                   (planned))
+  graphics/      brand + angle -> post card (the brand-aware half)
+  render/        HTML/CSS template -> PNG via Chromium (brand-blind)
   platforms/     facebook; x, linkedin, youtube                   (planned)
   credentials/   env-var lookup today; encrypted vault            (planned)
   workers/       publisher; metrics, token_refresher, quota       (planned)
-  store/         brand-scoped repositories, checkpointer, migrations
+  store/         models, brand-scoped repositories, migrations
+                 (Postgres checkpointer                           (planned))
+  scheduler.py   Slack socket + drafting on each brand's slots
+  main.py        Slack socket alone, or one run for one brand
+scripts/         fb_publish.py — post/list/show against a Page, no agent
 tests/
 ```
 
@@ -124,7 +137,9 @@ re-syncs if a dependency drifted.
 
 Two processes is the whole of it: `app.scheduler` holds the Slack socket and
 `app.workers.publisher` ships what you approve. `uv run python -m app.main` (no
-argument) is the same bot without the timer, for running mentions alone.
+argument) is the same bot without the timer, for running mentions alone;
+`uv run python -m app.main <brand>` briefs that brand once and exits. Both
+long-running processes also take `--once` for an external timer.
 
 `app.scheduler` is the cron half: it briefs a brand at each slot its `brand.yaml`
 declares, so every post is researched at the moment it is wanted rather than
@@ -184,34 +199,38 @@ Two that are easy to get wrong, and neither fails in an obvious way:
   brands sharing an id means one silently answers for the other. `start_listener`
   now refuses that too, rather than discovering it in a published post.
 
-Google hands you the YouTube OAuth client as a downloaded JSON file. Do not
-leave it in the project root. Put it in `secrets/` (gitignored) or outside the
-repo, and point at it by absolute path:
-
-```
-GOOGLE_CLIENT_SECRETS_FILE=C:\Users\...\secrets\client_secret.json
-```
+Facebook Page tokens are `FB_PAGE_TOKEN_<SLUG>`, one per brand, resolved by
+[app/credentials/tokens.py](app/credentials/tokens.py). Nothing reads a YouTube,
+X or LinkedIn credential yet; when the YouTube adapter lands, keep Google's
+downloaded OAuth client JSON in `secrets/` (gitignored) or outside the repo,
+never in the project root.
 
 ## Platform constraints worth remembering
 
 - **Facebook personal profiles cannot be posted to via API** (`publish_actions`
   removed 2018). Pages only.
+- **The Meta app must be in Live mode.** A Development-mode app can post to a
+  Page its developer administers, but those posts are visible only to people
+  with a role on the app — the Page owner sees them, followers do not. Live mode
+  needs a privacy policy URL ([PRIVACY_POLICY.md](PRIVACY_POLICY.md)), not App
+  Review: Standard Access to `pages_manage_posts` covers Pages you administer.
 - **LinkedIn** personal posting is self-serve (`w_member_social`, no partner
   review), but tokens expire in **60 days** — the refresher is not optional.
 - **YouTube** quota is 10,000 units/day per *project*, shared across both
   channels; `videos.insert` costs ~1,600 (~6 uploads/day).
-- **Meta app review** for `pages_manage_posts` is the longest lead time in the
-  project. Start it before writing adapter code.
+- **Meta App Review** is only needed to post to Pages other people own, which
+  this product never does.
 
 ## Build order
 
-1. `domain/` — models, state machine, migrations
-2. One adapter (X) end-to-end, published from a script — no agent
-3. `workers/publisher.py` + scheduling
-4. Agent with read-only tools
-5. Draft + approval tools, HITL interrupt
-6. Remaining adapters
-7. Approval UI
+1. `domain/` — models, state machine, migrations — **done**
+2. One adapter end-to-end, published from a script — no agent — **done**
+   (Facebook, via `scripts/fb_publish.py`, rather than the X planned)
+3. `workers/publisher.py` + scheduling — **done**
+4. Agent with read-only tools — **done** (`web_search`)
+5. Draft + approval tools, HITL interrupt — **done** (`submit_for_approval`)
+6. Remaining adapters — X, LinkedIn, YouTube not started
+7. Approval UI — Slack Block Kit (approve / edit / reject) is what exists
 
 Steps 1-3 are the product. If the agent layer turned out to be a bad idea,
 you'd still have a working scheduler.

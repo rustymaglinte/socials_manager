@@ -2,6 +2,9 @@
 
 **Status:** draft v0.1 · **Date:** 2026-08-27 · **Owner:** Rusty Maglinte
 
+This is the design intent. Where the build has diverged, a **Now:** note says
+what is actually true as of 2026-09-13; the code wins over the prose.
+
 An approval-gated social media agent managing three identities across four
 platforms, driven from Slack, built on LangChain/LangGraph in Python.
 
@@ -83,6 +86,15 @@ scoping is implemented as tenancy so it does not need retrofitting later.
 - **FR-16** Post performance is polled and attributed back to the originating draft.
 - **FR-17** A cross-brand calendar view answers "am I overposting this week?"
 
+**Now:**
+
+| Built | Partial | Not built |
+|---|---|---|
+| FR-1, FR-8, FR-9, FR-11, FR-12, FR-13, FR-15 | FR-4 (recent angles and topics feed the brief; no performance data), FR-6 (banned terms and disclaimers are in the prompt, not checked in code), FR-10 (Slack approve / edit / reject, while the run is waiting), FR-14 (retry, backoff and dead-letter work; nobody is notified — the error sits in `last_error`) | FR-2 (capabilities), FR-3, FR-5, FR-7, FR-16 (tables exist, no poller), FR-17 |
+
+Runs are started by a Slack mention or by `app.scheduler` on each brand's slots,
+and draft for Facebook only.
+
 ---
 
 ## 4. Constraints
@@ -93,6 +105,8 @@ scoping is implemented as tenancy so it does not need retrofitting later.
 - **C-3** LLM-provider agnostic. No provider or gateway SDK outside `app/llm/`.
 - **C-4** The publishing path must not depend on the LLM being available.
 - **C-5** Secrets never live in the repo. Tokens are encrypted at rest.
+  **Now:** the first half holds; tokens are plain environment variables, and the
+  encrypted vault is planned.
 - **C-6** Python ≥3.11, managed with `uv`. Windows-first development.
 
 ---
@@ -107,6 +121,10 @@ either three Meta app reviews or an awkwardly shared app across repos. What
 actually differs between brands is voice, cadence, and policy — data, not code.
 
 *Consequence:* `Brand` is a first-class entity; everything is brand-scoped.
+
+**Now:** no Meta App Review is needed at all — every Page is administered by the
+app's developer, which Standard Access covers. The app does have to be in Live
+mode (§7.1).
 
 ### D2 — The agent does not own the publishing state machine
 
@@ -146,6 +164,9 @@ deliberately removes.
 `interrupt()` / `Command(resume=...)`. Revisit deepagents only for a separate
 campaign-planner entrypoint (§9).
 
+**Now:** the checkpointer is `InMemorySaver`, so a restart loses a run waiting
+on approval (DEPLOY.md, Known limits). The Postgres checkpointer is planned.
+
 ### D6 — Slack, not Telegram
 
 Channels map 1:1 onto brands, which gives D3 its enforcement for free. Block Kit
@@ -155,6 +176,9 @@ approval. Threads map cleanly to LangGraph `thread_id`.
 *Consequence:* more setup than Telegram and worse mobile UX. Mitigated by a
 `ChatTransport` protocol keeping the swap to roughly a day.
 
+**Now:** there is no `ChatTransport` protocol; `app/transports/slack_approval/`
+is called directly.
+
 ### D7 — Provider-agnostic by capability detection, not lowest common denominator
 
 `app/llm/` is the sole provider boundary. `capabilities_for(route)` reports what
@@ -163,6 +187,10 @@ absent.
 
 *Consequence:* the caching *mechanism* branches by route; the prompt *structure*
 that enables caching is shared.
+
+**Now (D7 and D11):** not built. `app/llm/` holds one `chat_model()` through
+OpenRouter; `capabilities.py`, `roles.py` and `middleware.py` are empty, and
+prompt caching is not in effect. See `app/llm/README.md`.
 
 ### D11 — OpenRouter as the default gateway; capability keyed on (gateway, family)
 
@@ -228,6 +256,18 @@ Brand ──< Account ──< ScheduledPost
 Every table carries `brand_id NOT NULL`. Repositories take `brand_id` in every
 query signature, with optional Postgres row-level security as a second layer.
 
+**Now** (`app/store/models.py`, whose docstrings give the reasons):
+
+- The tenancy column is `brand_slug`, a foreign key to `brands.slug`; `Brand`
+  holds only the slug, and tier and policy stay in `brand.yaml`.
+- There is no `Account` table. An account is `(brand, platform)` resolved from
+  `brand.yaml`, so `ScheduledPost` carries `platform`, not `account_id`.
+- `Approval` is per `PostVariant`, not per draft, and snapshots `approved_body`.
+- `ScheduledPost` references its approval by `(approval_id, approval_decision)`
+  with a CHECK, so a rejection cannot back a schedule.
+- Added: `PostMedia` (the approved graphic's bytes), and `PostMetric` and
+  `PostEngagement` for FR-16 — nothing writes to those two yet.
+
 ### 6.1 Lifecycle
 
 ```
@@ -246,8 +286,17 @@ Transitions are enforced in `app/domain/states.py`, never in tools.
 
 Personal-profile posting was removed with `publish_actions` in Graph API v3.0
 (2018) and has not returned. **Pages only.** One Meta app covers both brand
-Pages; `pages_manage_posts` review is the longest lead time in the project and
-should be started before adapter code is written.
+Pages.
+
+No App Review: Standard Access to `pages_manage_posts` covers Pages the app's
+developer administers, which is all of them. But the app must be in **Live
+mode** — posts made by a Development-mode app are visible only to people with a
+role on the app, so the owner sees them and followers do not. Live mode needs a
+public privacy policy URL (`PRIVACY_POLICY.md`).
+
+Permissions in use: `pages_manage_posts` (publish text and photos),
+`pages_read_engagement` (read posts back), `pages_show_list` and
+`business_management` (obtain the Page token).
 
 ### 7.2 LinkedIn
 
@@ -291,6 +340,11 @@ Frozen at about ten tools for prompt-cache stability.
 Gating the smallest possible set keeps the chat usable; a draft that cannot
 reach a platform does not need a gate.
 
+**Now:** two tools — `web_search` (Tavily, ungated) and `submit_for_approval`
+(gated by `HumanInTheLoopMiddleware`). Drafts are opened by the run itself
+(`app/main.py`) rather than by a `create_draft` tool; the rest of the table is
+unbuilt.
+
 ---
 
 ## 9. Out of scope for v1
@@ -300,7 +354,9 @@ reach a platform does not need a gate.
 - Multi-user accounts, roles, delegated approval
 - Comment and DM handling, social listening
 - Paid promotion and ad management
-- Media generation (images, video, thumbnails)
+- Media generation (images, video, thumbnails) — **Now:** except text-card post
+  graphics, rendered from an HTML template per brand theme (`app/render/`,
+  `app/graphics/`)
 - Long-horizon campaign planning — candidate for a separate deepagents entrypoint
 
 ---
@@ -310,11 +366,17 @@ reach a platform does not need a gate.
 - **Q1** Personal Facebook: create a Page, or accept that it stays manual? Blocks
   the `personal` brand's account list.
 - **Q2** Final brand names and handles — `brands/*/brand.yaml` are all `TODO`.
+  **Now:** PinoySing's Facebook Page id is set (live Page); every other account
+  is still `TODO`.
 - **Q3** Voice profiles for all three brands are unwritten (`brands/*/voice.md`).
+  **Now:** PinoySing and Derekt are written; `personal` is still `TODO`.
 - **Q4** Where does the out-of-band approval UI live — Slack Block Kit modals
   only, or a minimal web view? Slack-only is assumed until proven insufficient.
 - **Q5** Media pipeline: where do images and video live before upload? Local
   `media/` is assumed for v1; object storage if it outgrows that.
+  **Now, resolved for images:** the rendered PNG is stored as bytes in Postgres
+  (`post_media`), because the agent and publisher are separate services with
+  ephemeral disks. Video is still open.
 - **Q6** Derekt compliance rules need review by someone qualified. Derekt is a
   trading SaaS (software sold to traders), not a broker or advisory — but
   marketing claims about outcomes are still exposed. The
@@ -337,3 +399,6 @@ reach a platform does not need a gate.
 
 Steps 1–3 are the product. If the agent layer proved to be a bad idea, a working
 scheduler would remain.
+
+**Now:** steps 1–5 are done, with Facebook as the step-2 adapter instead of X.
+Step 6 has not started. Step 7 is Slack Block Kit approval only.

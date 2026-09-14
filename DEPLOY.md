@@ -63,8 +63,7 @@ interpreter does not run for a reason the build log never mentions.
 
 ## Known limits
 
-Carried over from the pre-deploy review; none is a build problem, all three will
-be visible during UAT.
+Carried over from the pre-deploy review; none is a build problem.
 
 - **A redeploy during an approval window loses that run.** The LangGraph
   checkpointer is `InMemorySaver` and the pending-approval registry is in
@@ -84,11 +83,18 @@ be visible during UAT.
   The two are separate on purpose: pausing new drafts while approved posts keep
   going out is the common case.
 - **Anyone in a brand's Slack channel can approve a post.** The approver's id is
-  recorded but never checked. Acceptable in a private UAT channel; close it
-  before the live Page id goes back into `brands/pinoysing/brand.yaml`.
+  recorded but never checked. Accepted while the operator is the channel's only
+  member; close it before anyone else joins a brand channel.
 
-## Before going live
+## Going live
 
-`brands/pinoysing/brand.yaml` currently points at the **test** Page
-(`2222222222222222`), with the live id commented out beside it. That is correct
-for UAT. Swapping it back is a deliberate, separate change.
+`brands/pinoysing/brand.yaml` points at the **live** Page (`111111111111111`),
+with the test Page id (`2222222222222222`) commented out beside it. Swap them to
+go back to UAT — a deliberate, separate change either way.
+
+The Meta app must also be in **Live mode**, or every post the API makes is
+visible only to people with a role on the app: the Page owner sees it, followers
+do not. Switching needs a privacy policy URL ([PRIVACY_POLICY.md](PRIVACY_POLICY.md),
+published somewhere public), an app icon and a category, under App Settings →
+Basic. No App Review — Standard Access covers Pages you administer. Check the
+first post afterwards from a logged-out browser, not the owner's account.

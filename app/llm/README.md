@@ -3,7 +3,23 @@
 The only package allowed to import a provider or gateway SDK. Enforced by the
 "Provider SDKs are confined to app.llm" contract in `pyproject.toml`.
 
-## Two axes, not one
+## What exists today
+
+One function: `chat_model()` in [factory.py](factory.py), which builds a single
+model through OpenRouter from three variables and caches it:
+
+```
+OPENROUTER_MODEL=anthropic/claude-...   # id from https://openrouter.ai/models
+OPENROUTER_PROVIDER=...                 # what init_chat_model constructs
+OPENROUTER_API_KEY=...
+```
+
+`capabilities.py`, `roles.py` and `middleware.py` are empty files. Everything
+below — routes, roles, per-route caching — is the **planned** design, and none
+of the `LLM_*` variables it names is read by anything yet. Prompt caching is not
+in effect.
+
+## Two axes, not one (planned)
 
 A gateway like OpenRouter separates *who we send HTTP to* from *whose model
 runs*. Capability differs along both, so `Route` carries both:
@@ -18,7 +34,9 @@ runs*. Capability differs along both, so `Route` carries both:
 The first two rows run the *same model* with *different* caching mechanisms.
 That is the whole reason this module exists.
 
-## Configuration
+## Configuration (planned)
+
+Replaces the three `OPENROUTER_*` variables once roles land:
 
 ```
 LLM_CHAT_MODEL=openrouter:anthropic/claude-...
@@ -45,6 +63,7 @@ So: **check `response.usage` for cached-token counts on a repeated request.**
 If it is zero across repeats, the markers are not landing. Options in order:
 
 1. Confirm breakpoints are actually being written by `agent/prompts/assembly.py`
+   (today it computes them and `render()` drops them — nothing consumes them yet)
 2. Check whether the route supports the native wire format
 3. Fall back to `LLM_CHAT_MODEL=anthropic:...` direct for the chat role only —
    the role split exists precisely so this is a one-variable change
@@ -56,8 +75,9 @@ and so you can A/B the gateway against it.
 
 Two edits, both in this package:
 
-1. A row in `capabilities.py` (`_DIRECT` or `_OPENROUTER`)
-2. A branch in `factory.build_model` if it needs a different client class
+1. A row in `capabilities.py` (`_DIRECT` or `_OPENROUTER`) — once it exists
+2. A branch in `factory.chat_model` if it needs a different client class
+   (today it always passes OpenRouter's `base_url`)
 
 Nothing outside `app/llm/` changes. If you find yourself editing `agent/` to add
 a provider, the boundary has leaked.
