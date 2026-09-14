@@ -26,7 +26,7 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
-from app.domain.brand import load_brand
+from app.domain.brand import account_id_env_var, load_brand
 from app.domain.brand.context import BrandContext, BrandNotFound
 from app.platforms.facebook import (
     GRAPH_URL,
@@ -75,8 +75,8 @@ def credentials(brand: BrandContext) -> tuple[str, str]:
     page_id = account.external_id
     if not account.configured or not page_id:
         raise SystemExit(
-            f"page_id for {brand.slug} is still a placeholder in "
-            f"brands/{brand.slug}/brand.yaml"
+            f"{brand.slug} has no Facebook Page id. "
+            f"Set {account_id_env_var(brand.slug, PLATFORM)} in .env"
         )
 
     token = os.getenv(token_env_var(brand.slug))
@@ -402,7 +402,7 @@ async def do_check(args: argparse.Namespace) -> None:
     identity = response.json()
     print(f"{token_env_var(brand.slug)} identifies as:")
     print(f"  {identity.get('name')}  ({identity.get('id')})")
-    print(f"brands/{brand.slug}/brand.yaml page_id:")
+    print(f"{account_id_env_var(brand.slug, PLATFORM)}:")
     print(f"  {page_id}")
     print()
 

@@ -151,8 +151,9 @@ async def _publish_facebook(post, client: httpx.AsyncClient) -> PublishedPost:
     """Resolve this brand's Page and post to it, with its graphic if it has one.
 
     The brand is loaded here, at the last moment, rather than carried through
-    the queue: brand.yaml is the source of truth for a Page id, and a post
-    approved yesterday should go to the Page the brand names today.
+    the queue: the Page id is configuration (`FB_PAGE_ID_<SLUG>`, resolved by
+    the brand loader), and a post approved yesterday should go to the Page this
+    process is configured for today.
 
     The *image*, by contrast, is carried through the queue rather than made
     here, and that asymmetry is deliberate. A Page id is configuration and

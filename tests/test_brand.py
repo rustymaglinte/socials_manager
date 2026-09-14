@@ -5,6 +5,8 @@ tests here matter more than their size suggests: a wrong answer puts one brand's
 draft in another brand's channel.
 """
 
+from datetime import time
+
 import pytest
 
 from app.domain.brand import (
@@ -12,6 +14,7 @@ from app.domain.brand import (
     Account,
     BrandMisconfigured,
     BrandNotFound,
+    account_id_env_var,
     all_brands,
     brand_for_channel,
     load_brand,
@@ -33,6 +36,42 @@ def test_the_shipped_brand_files_all_load(real_brands):
         assert PLACEHOLDER not in brand.briefs.shared
         for name, text in brand.briefs.angles.items():
             assert PLACEHOLDER not in text, f"{brand.slug}/{name} shipped a TODO"
+
+
+def test_pinoysing_posts_at_noon_and_seven_in_the_evening(real_brands):
+    """Twice a day, Manila time: 1-2 posts/day is the Facebook Page norm, and
+    karaoke is an evening habit. Three hours to approve, so a late approval
+    cannot publish after midnight."""
+    brand = next(b for b in real_brands if b.slug == "pinoysing")
+
+    assert brand.timezone == "Asia/Manila"
+    assert brand.post_slots == (time(12, 0), time(19, 0))
+    assert brand.max_per_day == 2
+    assert brand.max_per_week == 14
+    assert brand.approval_hours == 3
+
+
+def test_cadence_reads_approval_hours(write_brand):
+    write_brand(
+        "timed",
+        """
+        display_name: "Timed"
+        cadence:
+          max_per_day: 2
+          every_hours: 7
+          first_slot: "12:00"
+          approval_hours: 3
+        """,
+    )
+
+    assert load_brand("timed").approval_hours == 3
+
+
+def test_approval_hours_defaults_to_zero(write_brand):
+    """Zero means "the gap to the next slot decides", which is today's behaviour."""
+    write_brand("bare", 'display_name: "Bare"')
+
+    assert load_brand("bare").approval_hours == 0
 
 
 @pytest.mark.parametrize(
@@ -92,33 +131,112 @@ def test_load_brand_normalises_hashtags_from_yaml(write_brand):
     assert load_brand("derekt").hashtags == ("#trading", "#tradingbot", "#quant")
 
 
-def test_load_brand_reads_the_id_under_whichever_key_the_platform_uses(write_brand):
-    write_brand(
-        "mixed",
-        """
-        display_name: "Mixed"
-        accounts:
-          - platform: linkedin
-            handle: "rusty"
-            enabled: true
-          - platform: facebook
-            page_id: "67890"
-            enabled: true
-          - platform: youtube
-            channel_id: "UC123"
-            enabled: true
-          - platform: x
-            enabled: true
-        """,
-    )
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [
+        ("facebook", "FB_PAGE_ID_PINOYSING"),
+        ("x", "X_HANDLE_PINOYSING"),
+        ("youtube", "YOUTUBE_CHANNEL_ID_PINOYSING"),
+        ("linkedin", "LINKEDIN_ID_PINOYSING"),
+    ],
+)
+def test_account_id_env_var_sits_beside_the_token_variable(platform, expected):
+    """Same shape as FB_PAGE_TOKEN_<SLUG>, so a Page's id and token are one
+    search apart in .env and in Railway's variable list."""
+    assert account_id_env_var("pinoysing", platform) == expected
+
+
+def test_account_id_env_var_is_none_for_a_platform_with_no_convention():
+    assert account_id_env_var("pinoysing", "tiktok") is None
+
+
+ALL_PLATFORMS_YAML = """
+display_name: "Mixed"
+accounts:
+  - platform: linkedin
+    enabled: true
+  - platform: facebook
+    enabled: true
+  - platform: youtube
+    enabled: true
+  - platform: x
+    enabled: true
+"""
+
+
+def test_load_brand_reads_each_account_id_from_the_environment(write_brand, monkeypatch):
+    """Ids are deployment state, not brand identity: the live and test Page
+    differ per environment, the same argument that put Slack channel ids in .env."""
+    monkeypatch.setenv("LINKEDIN_ID_MIXED", "rusty")
+    monkeypatch.setenv("FB_PAGE_ID_MIXED", "67890")
+    monkeypatch.setenv("YOUTUBE_CHANNEL_ID_MIXED", "UC123")
+    write_brand("mixed", ALL_PLATFORMS_YAML)
 
     ids = {a.platform: a.external_id for a in load_brand("mixed").accounts}
     assert ids == {
         "linkedin": "rusty",
         "facebook": "67890",
         "youtube": "UC123",
-        "x": None,  # no identifier key at all
+        "x": None,  # X_HANDLE_MIXED is unset
     }
+
+
+def test_an_unset_id_variable_leaves_the_account_unconfigured(write_brand):
+    """Draftable nowhere, publishable nowhere -- exactly what a TODO used to mean."""
+    write_brand("mixed", ALL_PLATFORMS_YAML)
+
+    brand = load_brand("mixed")
+
+    assert all(not account.configured for account in brand.accounts)
+    assert brand.publishable_accounts == ()
+
+
+def test_a_blank_id_variable_is_the_same_as_unset(write_brand, monkeypatch):
+    monkeypatch.setenv("FB_PAGE_ID_MIXED", "   ")
+    write_brand("mixed", ALL_PLATFORMS_YAML)
+
+    facebook = next(a for a in load_brand("mixed").accounts if a.platform == "facebook")
+    assert facebook.external_id is None
+
+
+def test_an_unknown_platform_loads_without_an_id(write_brand, caplog):
+    write_brand(
+        "odd",
+        """
+        display_name: "Odd"
+        accounts:
+          - platform: tiktok
+            enabled: true
+        """,
+    )
+
+    (account,) = load_brand("odd").accounts
+
+    assert account.external_id is None
+    assert "tiktok" in caplog.text
+
+
+@pytest.mark.parametrize("key", ["page_id", "handle", "channel_id", "external_id"])
+@pytest.mark.parametrize("value", ["111111111111111", "TODO"])
+def test_an_id_left_in_brand_yaml_refuses_to_load(write_brand, monkeypatch, key, value):
+    """Refused rather than ignored. Ignoring it is the dangerous half: someone
+    swaps to the test Page in the yaml, nothing complains, and the post goes to
+    the live Page the environment still names."""
+    monkeypatch.setenv("FB_PAGE_ID_STALE", "2222222222222222")
+    write_brand(
+        "stale",
+        f"""
+        display_name: "Stale"
+        accounts:
+          - platform: facebook
+            {key}: "{value}"
+            enabled: true
+        """,
+    )
+
+    with pytest.raises(BrandMisconfigured, match="FB_PAGE_ID_STALE") as raised:
+        load_brand("stale")
+    assert key in str(raised.value)
 
 
 def test_load_brand_defaults_everything_optional(write_brand):

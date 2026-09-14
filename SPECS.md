@@ -260,8 +260,10 @@ query signature, with optional Postgres row-level security as a second layer.
 
 - The tenancy column is `brand_slug`, a foreign key to `brands.slug`; `Brand`
   holds only the slug, and tier and policy stay in `brand.yaml`.
-- There is no `Account` table. An account is `(brand, platform)` resolved from
-  `brand.yaml`, so `ScheduledPost` carries `platform`, not `account_id`.
+- There is no `Account` table. An account is `(brand, platform)`: `brand.yaml`
+  declares it and whether it is enabled, and its `external_id` comes from the
+  environment (`FB_PAGE_ID_<SLUG>` and siblings, read by the brand loader), so
+  `ScheduledPost` carries `platform`, not `account_id`.
 - `Approval` is per `PostVariant`, not per draft, and snapshots `approved_body`.
 - `ScheduledPost` references its approval by `(approval_id, approval_decision)`
   with a CHECK, so a rejection cannot back a schedule.
@@ -366,8 +368,9 @@ unbuilt.
 - **Q1** Personal Facebook: create a Page, or accept that it stays manual? Blocks
   the `personal` brand's account list.
 - **Q2** Final brand names and handles — `brands/*/brand.yaml` are all `TODO`.
-  **Now:** PinoySing's Facebook Page id is set (live Page); every other account
-  is still `TODO`.
+  **Now:** ids left `brand.yaml` for the environment (see README, Environment).
+  PinoySing's Facebook Page id is set there (`FB_PAGE_ID_PINOYSING`); every
+  other account's is still unset.
 - **Q3** Voice profiles for all three brands are unwritten (`brands/*/voice.md`).
   **Now:** PinoySing and Derekt are written; `personal` is still `TODO`.
 - **Q4** Where does the out-of-band approval UI live — Slack Block Kit modals

@@ -26,9 +26,9 @@ already the source of truth for configuration:
   cadence are in `brand.yaml`, and a second copy in Postgres is a second place
   for them to be wrong. The table earns its place purely as the foreign-key
   anchor for `brand_slug`, which a bare string column could not enforce.
-- There is no `accounts` table. An account *is* `(brand, platform)`, and its
-  external id already comes from `brand.yaml` -- `scripts/fb_publish.py` makes
-  exactly that join today. `ScheduledPost` therefore carries `platform`, and the
+- There is no `accounts` table. An account *is* `(brand, platform)`: declared in
+  `brand.yaml`, with its external id from the environment (`FB_PAGE_ID_<SLUG>`)
+  -- the brand loader makes that join, and `scripts/fb_publish.py` uses it. `ScheduledPost` therefore carries `platform`, and the
   publisher resolves the page id the same way the script does. A store-side
   `Account` would be a second class of that name, loaded from somewhere else.
 """
@@ -461,7 +461,7 @@ class ScheduledPost(Base):
     approval_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False)
     approval_decision: Mapped[Verdict] = _state_column(Verdict, Verdict.APPROVED)
 
-    # Which account, resolved against brand.yaml at publish time rather than
+    # Which account, resolved against the brand's configuration at publish time rather than
     # stored -- see the module docstring on why there is no accounts table.
     platform: Mapped[str] = mapped_column(sa.String(PLATFORM_LENGTH), nullable=False)
 

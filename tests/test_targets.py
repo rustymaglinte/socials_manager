@@ -71,23 +71,26 @@ def test_a_brand_with_no_accounts_at_all_says_so():
     assert "no enabled account in brands/empty/brand.yaml" in str(raised.value)
 
 
-def test_the_message_names_the_placeholder_that_has_to_be_filled_in():
-    """The fix is a line of yaml, so the message has to name the line."""
+def test_the_message_names_the_id_variable_that_has_to_be_set():
+    """The fix is one environment variable, so the message has to name it --
+    not brand.yaml, which no longer holds ids and would send the operator to
+    the wrong file."""
     brand = make_brand(
         slug="derekt",
-        accounts=(Account(platform="facebook", enabled=True, external_id=PLACEHOLDER),),
+        accounts=(Account(platform="facebook", enabled=True, external_id=None),),
     )
 
     with pytest.raises(NoTargetPlatform) as raised:
         require_targets(brand)
 
     message = str(raised.value)
-    assert "still a placeholder in brands/derekt/brand.yaml: facebook" in message
+    assert "no account id set: facebook (FB_PAGE_ID_DEREKT)" in message
+    assert "brand.yaml" not in message
     assert "can publish to facebook" in message
 
 
 def test_the_message_distinguishes_a_missing_adapter_from_a_missing_id():
-    """Two different fixes: fill in the yaml, or write an adapter."""
+    """Two different fixes: set the variable, or write an adapter."""
     brand = make_brand(
         accounts=(
             Account(platform="linkedin", enabled=True, external_id="12345"),
@@ -99,5 +102,5 @@ def test_the_message_distinguishes_a_missing_adapter_from_a_missing_id():
         require_targets(brand)
 
     message = str(raised.value)
-    assert "still a placeholder" in message and "youtube" in message
+    assert "no account id set: youtube (YOUTUBE_CHANNEL_ID_DEREKT)" in message
     assert "no publisher adapter exists: linkedin" in message

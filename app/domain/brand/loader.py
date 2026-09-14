@@ -1,9 +1,9 @@
-"""Reading brands/<slug>/ off disk.
+"""Reading brands/<slug>/ off disk, plus each account's id from the environment.
 
-The only module here that touches the filesystem or yaml. Everything it returns
-is defined in context.py, and every field it fills comes from a file an operator
-hand-edits -- so absent, empty, and still-a-TODO are the normal cases, not the
-exceptional ones. The rule throughout: degrade to "this brand cannot do that
+The only module here that touches the filesystem, yaml, or environment.
+Everything it returns is defined in context.py, and every field it fills comes
+from a file or variable an operator hand-edits -- so absent, empty, and
+still-a-TODO are the normal cases, not the exceptional ones. The rule throughout: degrade to "this brand cannot do that
 yet" with a warning, and reserve raising for what would silently produce a wrong
 post (an unknown timezone, a missing brand.yaml).
 
@@ -11,6 +11,7 @@ Framework-free by contract: stdlib and PyYAML only (SPECS D1).
 """
 
 import logging
+import os
 from datetime import time
 from functools import lru_cache
 from pathlib import Path
@@ -28,6 +29,7 @@ from app.domain.brand.context import (
     BrandNotFound,
     BriefCatalog,
     PostTheme,
+    account_id_env_var,
     normalise_channel,
     normalise_hashtag,
 )
@@ -40,14 +42,47 @@ logger = logging.getLogger(__name__)
 # leave the functions below still reading the real directory.
 BRANDS_DIR = Path(__file__).resolve().parents[3] / "brands"
 
-# Platforms name their identifier differently; the loader only needs to find one.
-_ID_KEYS = ("handle", "page_id", "channel_id", "external_id")
+# Where account ids used to live in brand.yaml. Now refused on sight -- see
+# `_account`.
+_RETIRED_ID_KEYS = ("handle", "page_id", "channel_id", "external_id")
 
 
-def _account(raw: dict[str, Any]) -> Account:
-    external_id = next((raw[key] for key in _ID_KEYS if raw.get(key)), None)
+def _account(raw: dict[str, Any], slug: str) -> Account:
+    """One `accounts:` entry, its id read from the environment.
+
+    An id still written in the yaml raises rather than being ignored, even a
+    TODO. Ignoring it is what would produce a wrong post: an operator swaps to
+    the test Page in brand.yaml, nothing complains, and the post goes to the
+    live Page the environment still names.
+
+    Read once per process, like the rest of the brand (`load_brand` is cached),
+    so every entry point must `load_dotenv()` before its first brand load. All
+    of them do it at import.
+    """
+    platform = raw["platform"]
+    variable = account_id_env_var(slug, platform)
+
+    stale = [key for key in _RETIRED_ID_KEYS if key in raw]
+    if stale:
+        where = f"set {variable}" if variable else "no id variable exists for this platform yet"
+        raise BrandMisconfigured(
+            f"brands/{slug}/brand.yaml still has {', '.join(stale)} on its "
+            f"{platform} account. Account ids live in the environment now: "
+            f"delete the key and {where}."
+        )
+
+    external_id = None
+    if variable is None:
+        logger.warning(
+            "No id variable convention for %s's %s account; it cannot be published to",
+            slug,
+            platform,
+        )
+    else:
+        external_id = (os.getenv(variable) or "").strip() or None
+
     return Account(
-        platform=raw["platform"],
+        platform=platform,
         enabled=bool(raw.get("enabled", False)),
         external_id=external_id,
     )
@@ -198,7 +233,7 @@ def load_brand(slug: str) -> BrandContext:
         tier=raw.get("tier", "brand"),
         policy_profile=raw.get("policy_profile", "standard"),
         slack_channel=normalise_channel(raw.get("slack_channel", "")),
-        accounts=tuple(_account(a) for a in raw.get("accounts") or ()),
+        accounts=tuple(_account(a, slug) for a in raw.get("accounts") or ()),
         voice=_load_voice(directory / "voice.md", slug),
         banned_terms=tuple(raw.get("banned_terms") or ()),
         required_disclaimers=dict(raw.get("required_disclaimers") or {}),
@@ -210,6 +245,7 @@ def load_brand(slug: str) -> BrandContext:
         theme=_theme(raw.get("theme"), slug),
         every_hours=int(cadence.get("every_hours", 0)),
         first_slot=_slot_time(cadence.get("first_slot"), slug),
+        approval_hours=int(cadence.get("approval_hours", 0)),
     )
 
 

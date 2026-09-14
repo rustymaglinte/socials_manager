@@ -227,10 +227,10 @@ async def publish(
     (FR-13) is the store's job, which is the reason the agent does not own the
     publishing state machine (SPECS D2).
     """
-    # The failures most likely in practice are an unset env var and a page_id
-    # left at its brand.yaml placeholder, and both are worth catching before a
-    # round trip. The placeholder itself is the caller's check -- `configured` on
-    # the Account knows what a TODO looks like, and this module stays brand-blind.
+    # The failures most likely in practice are an unset token and an unset Page
+    # id, and both are worth catching before a round trip. Whether an id is a
+    # real one is the caller's check -- `configured` on the Account knows what
+    # unset looks like, and this module stays brand-blind.
     if not access_token:
         raise PublishFailed("No Page access token supplied")
     if not page_id:

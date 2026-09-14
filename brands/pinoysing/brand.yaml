@@ -7,27 +7,35 @@ slack_channel: "#pinoysing-socials"
 # in a brief (see briefs.yaml).
 timezone: "Asia/Manila"
 
+# Ids are not written here: each comes from the environment, so the live and
+# test Page are a variable apart rather than a commit apart.
+#   FB_PAGE_ID_PINOYSING   live 111111111111111, test 2222222222222222
+#   X_HANDLE_PINOYSING, YOUTUBE_CHANNEL_ID_PINOYSING
+# Unset means unpublishable, and a page_id/handle/channel_id key here refuses
+# to load. See .env.example.
 accounts:
   - platform: facebook # Page, via Graph API
-    page_id: "111111111111111" #live PinoySing page
-    # page_id: "2222222222222222" #test facebook page
     enabled: true
   - platform: x
-    handle: "TODO"
     enabled: true
   - platform: youtube
-    channel_id: "TODO"
     enabled: true
 
 cadence:
-  max_per_day: 5
-  max_per_week: 35
-  # When the scheduler drafts, in this brand's timezone. Five slots two hours
-  # apart from 09:00 -- 09, 11, 13, 15, 17 -- which is exactly max_per_day, so
-  # the window closes on its own rather than needing a separate "stop" time.
-  # Quote it: unquoted 9:00 is sexagesimal in YAML and parses as a number.
-  every_hours: 2
-  first_slot: "09:00"
+  # Twice a day. 1-2 posts/day is the norm for a Facebook Page; more splits the
+  # same small organic reach across more posts.
+  max_per_day: 2
+  max_per_week: 14
+  # When the scheduler drafts, in this brand's timezone. Two slots seven hours
+  # apart from 12:00 -- 12:00 and 19:00, lunch and the evening karaoke crowd --
+  # which is exactly max_per_day, so the day closes on its own.
+  # Quote it: unquoted 12:00 is sexagesimal in YAML and parses as a number.
+  every_hours: 7
+  first_slot: "12:00"
+  # A post publishes when it is approved, so a draft left waiting until the gap
+  # to the next slot would let 19:00's go out after midnight. Three hours caps
+  # it: an unapproved draft expires by 15:00 or 22:00.
+  approval_hours: 3
 
 approval:
   required: always

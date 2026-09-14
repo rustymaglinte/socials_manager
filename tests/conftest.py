@@ -9,6 +9,10 @@ is the only place early enough for both:
    go in first, and `load_dotenv()` does not override what is already set.
 2. Nothing else: brands are repointed per test, since `load_brand` is cached and
    a leaked cache entry would make test order matter.
+
+Account ids are the opposite case: they must *not* come from the real .env,
+which `client.py`'s `load_dotenv()` pulls into this process on import. See
+`_no_real_account_ids`.
 """
 
 import os
@@ -22,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.brand import Account, BrandContext, BriefCatalog
+from app.domain.brand import ACCOUNT_ID_PREFIX, Account, BrandContext, BriefCatalog
 
 # The loader module, not the package facade: `app.domain.brand.BRANDS_DIR` is a
 # copy bound at import, so patching it there would leave the loader reading the
@@ -50,16 +54,22 @@ slack_channel: "#personal-socials"
 
 accounts:
   - platform: linkedin
-    handle: "rusty"
     enabled: true
   - platform: x
-    handle: "TODO"
     enabled: false
 
 cadence:
   max_per_day: 1
   max_per_week: 3
 """
+
+# What `two_brands` puts in the environment. The ids these brands had in their
+# yaml before ids moved out of it, so the tests reading them did not change.
+TWO_BRANDS_ACCOUNT_IDS = {
+    "LINKEDIN_ID_PERSONAL": "rusty",
+    "LINKEDIN_ID_DEREKT": "12345",
+    "FB_PAGE_ID_DEREKT": "67890",
+}
 
 DEREKT_YAML = """
 slug: derekt
@@ -70,10 +80,8 @@ slack_channel: "#Derekt-Socials"
 
 accounts:
   - platform: linkedin
-    page_id: "12345"
     enabled: true
   - platform: facebook
-    page_id: "67890"
     enabled: true
 
 banned_terms:
@@ -100,6 +108,22 @@ REAL_BRANDS_DIR = brand_loader.BRANDS_DIR
 def _clear_brand_caches() -> None:
     brand_loader.load_brand.cache_clear()
     brand_loader.all_brands.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_account_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test starts with no account id in the environment.
+
+    The loader reads ids from the environment, and the developer's .env holds
+    the live PinoySing Page id. Left in, a test's outcome would depend on whose
+    machine ran it -- and a test that means "an unset id is unpublishable" would
+    pass on CI and fail on the laptop that can actually post. A test that needs
+    an id sets it.
+    """
+    prefixes = tuple(f"{prefix}_" for prefix in ACCOUNT_ID_PREFIX.values())
+    for name in list(os.environ):
+        if name.startswith(prefixes):
+            monkeypatch.delenv(name)
 
 
 @pytest.fixture
@@ -159,8 +183,10 @@ def real_brands(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def two_brands(write_brand) -> None:
+def two_brands(write_brand, monkeypatch: pytest.MonkeyPatch) -> None:
     """The pair the isolation rules are about: one personal, one commercial."""
+    for name, value in TWO_BRANDS_ACCOUNT_IDS.items():
+        monkeypatch.setenv(name, value)
     write_brand("personal", PERSONAL_YAML, voice="# Voice\n\nPlain and direct.")
     write_brand("derekt", DEREKT_YAML, voice="# Voice\n\nDry, numbers first.")
 

@@ -9,15 +9,15 @@ slack_channel: "#derekt-socials"
 # at load rather than mid-run. (Not "TODO": this one is validated.)
 # timezone: "UTC"
 
+# Ids are not written here: each comes from the environment (FB_PAGE_ID_DEREKT,
+# X_HANDLE_DEREKT, YOUTUBE_CHANNEL_ID_DEREKT). Unset means unpublishable, and
+# a page_id/handle/channel_id key here refuses to load. See .env.example.
 accounts:
   - platform: facebook # Page, via Graph API
-    page_id: "TODO"
     enabled: true
   - platform: x
-    handle: "TODO"
     enabled: true
   - platform: youtube
-    channel_id: "TODO"
     enabled: true
 
 cadence:

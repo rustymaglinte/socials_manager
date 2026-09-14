@@ -9,9 +9,9 @@ cannot be answered.
 
 A target has to clear two bars, and they fail for different reasons:
 
-- The brand must have the account enabled *and* out of its TODO state
-  (`publishable_accounts`). An id that is still a placeholder means the yaml has
-  not been filled in.
+- The brand must have the account enabled in brand.yaml *and* an id for it in
+  the environment (`publishable_accounts`). An unset id means the deployment
+  has not been told which Page or channel this brand posts to.
 - A publisher adapter must exist for the platform (`PUBLISHABLE_PLATFORMS`).
   Drafting for one that has none produces an approval a human spends attention
   on, and then a dead-lettered row: the worker fails it as not retryable.
@@ -20,7 +20,7 @@ Both are configuration facts, so `require_targets` names which bar was missed
 rather than reporting "no platforms".
 """
 
-from app.domain.brand import BrandContext
+from app.domain.brand import BrandContext, account_id_env_var
 from app.platforms import PUBLISHABLE_PLATFORMS
 
 
@@ -45,8 +45,8 @@ def require_targets(brand: BrandContext) -> tuple[str, ...]:
     """The same list, but refusing to start a run that has nothing to aim at.
 
     Raised rather than logged: a run with no target would burn a model call to
-    produce a draft with no home, and the failure is a line of yaml away from
-    fixed. `app.transports.slack_approval.handlers` turns this into a message in
+    produce a draft with no home, and the failure is one line of configuration
+    away from fixed. `app.transports.slack_approval.handlers` turns this into a message in
     the channel the mention came from, so the person who asked sees the reason.
     """
     targets = target_platforms(brand)
@@ -56,7 +56,7 @@ def require_targets(brand: BrandContext) -> tuple[str, ...]:
 
 
 def _diagnosis(brand: BrandContext) -> str:
-    """Why this brand has no target, in terms of the file that fixes it."""
+    """Why this brand has no target, in terms of the file or variable that fixes it."""
     where = f"brands/{brand.slug}/brand.yaml"
     enabled = brand.enabled_accounts
 
@@ -67,11 +67,15 @@ def _diagnosis(brand: BrandContext) -> str:
         )
 
     reasons = []
-    placeholders = [a.platform for a in enabled if not a.configured]
-    if placeholders:
-        reasons.append(
-            f"still a placeholder in {where}: {', '.join(placeholders)}"
-        )
+    # Named by variable, not by file: ids live in the environment, and pointing
+    # at brand.yaml would send the operator to the one place it cannot be fixed.
+    unset = [
+        f"{a.platform} ({account_id_env_var(brand.slug, a.platform) or 'no id variable'})"
+        for a in enabled
+        if not a.configured
+    ]
+    if unset:
+        reasons.append(f"no account id set: {', '.join(unset)}")
 
     unsupported = [
         a.platform

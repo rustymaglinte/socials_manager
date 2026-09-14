@@ -20,11 +20,13 @@ Never logs, prints, or puts a token in an exception message.
 import os
 from dataclasses import dataclass
 
-from app.domain.brand.context import Account, BrandContext
+from app.domain.brand.context import Account, BrandContext, account_id_env_var
 
 # How each platform's token is named in the environment. Derived from the slug
 # rather than mapped brand-by-brand, so a second brand's Page needs a line in
-# .env and no code at all -- the same shape as SLACK_<SLUG>_CHANNEL_ID.
+# .env and no code at all -- the same shape as SLACK_<SLUG>_CHANNEL_ID. The id
+# it pairs with is `app.domain.brand.ACCOUNT_ID_PREFIX` (FB_PAGE_ID_<SLUG>),
+# read by the brand loader rather than here.
 #
 # `FB_PAGE_TOKEN_<SLUG>` is the spelling scripts/fb_publish.py established and
 # that operators already have in .env; changing it here would silently break a
@@ -95,12 +97,12 @@ def account_for(brand: BrandContext, platform: str) -> Account:
             f"{brand.slug}'s {platform} account is disabled in "
             f"brands/{brand.slug}/brand.yaml"
         )
-    # `configured` is the placeholder check the adapter deliberately does not
-    # do: knowing what a TODO looks like is the domain's business.
+    # `configured` is the unset-or-placeholder check the adapter deliberately
+    # does not do: knowing what a missing id looks like is the domain's business.
     if not account.configured:
+        variable = account_id_env_var(brand.slug, platform) or f"an id for {platform}"
         raise CredentialsMissing(
-            f"The {platform} id for {brand.slug} is still a placeholder in "
-            f"brands/{brand.slug}/brand.yaml (SPECS Q2)"
+            f"{brand.slug} has no {platform} account id. Set {variable} in .env"
         )
     return account
 

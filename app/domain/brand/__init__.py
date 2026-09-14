@@ -4,8 +4,8 @@ Was one module; split when the brief catalog pushed it past the point where the
 D3 routing rule could be found in it. The cut is by reason-to-change:
 
 - `context.py` -- the shapes and the exceptions. No I/O, no yaml.
-- `loader.py`  -- reading brands/<slug>/ off disk. The only module here that
-                  touches the filesystem.
+- `loader.py`  -- reading brands/<slug>/ off disk, and account ids from the
+                  environment. The only module here that does I/O.
 - `routing.py` -- channel -> brand, alone because it is all of SPECS D3.
 
 Import from this package, not from the submodules: the layout above is ours to
@@ -19,6 +19,7 @@ Framework-free by contract: stdlib and PyYAML only (SPECS D1).
 """
 
 from app.domain.brand.context import (
+    ACCOUNT_ID_PREFIX,
     DEFAULT_TIMEZONE,
     PLACEHOLDER,
     Account,
@@ -26,6 +27,7 @@ from app.domain.brand.context import (
     BrandMisconfigured,
     BrandNotFound,
     BriefCatalog,
+    account_id_env_var,
     normalise_channel,
     normalise_hashtag,
 )
@@ -33,6 +35,7 @@ from app.domain.brand.loader import BRANDS_DIR, all_brands, load_brand
 from app.domain.brand.routing import brand_for_channel
 
 __all__ = [
+    "ACCOUNT_ID_PREFIX",
     "BRANDS_DIR",
     "DEFAULT_TIMEZONE",
     "PLACEHOLDER",
@@ -41,6 +44,7 @@ __all__ = [
     "BrandMisconfigured",
     "BrandNotFound",
     "BriefCatalog",
+    "account_id_env_var",
     "all_brands",
     "brand_for_channel",
     "load_brand",

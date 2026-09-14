@@ -227,6 +227,43 @@ def test_a_brand_with_no_slots_gets_the_default_window():
     )
 
 
+def twice_a_day(**overrides):
+    """PinoySing's shape: 12:00 and 19:00 Asia/Manila, three hours to approve."""
+    return on_a_timer(
+        **{"every_hours": 7, "first_slot": time(12, 0), "max_per_day": 2,
+           "approval_hours": 3, **overrides}
+    )
+
+
+def test_approval_hours_caps_the_window_below_the_gap():
+    """Seven hours apart, the gap alone would leave a noon draft approvable at
+    18:30 -- and a post publishes when it is approved, not at its slot."""
+    seconds = scheduler.approval_window(twice_a_day(), manila(2026, 9, 11, 12))
+
+    assert seconds == 3 * 3600
+
+
+def test_approval_hours_stops_the_evening_draft_posting_after_midnight():
+    """Uncapped, 19:00's draft could be approved at 01:30 and go straight out."""
+    seconds = scheduler.approval_window(twice_a_day(), manila(2026, 9, 11, 19))
+
+    assert seconds == 3 * 3600
+
+
+def test_approval_hours_never_extends_past_the_margin_before_the_next_slot():
+    """A cap is a ceiling, not a grant: it cannot put two live drafts on screen."""
+    brand = twice_a_day(approval_hours=8)
+    seconds = scheduler.approval_window(brand, manila(2026, 9, 11, 12))
+
+    assert seconds == int((timedelta(hours=7) - scheduler.APPROVAL_MARGIN).total_seconds())
+
+
+def test_without_approval_hours_the_window_is_unchanged():
+    seconds = scheduler.approval_window(twice_a_day(approval_hours=0), manila(2026, 9, 11, 12))
+
+    assert seconds == int((timedelta(hours=7) - scheduler.APPROVAL_MARGIN).total_seconds())
+
+
 # --- how long to sleep --------------------------------------------------------
 
 

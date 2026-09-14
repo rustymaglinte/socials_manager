@@ -9,9 +9,10 @@ slack_channel: "#personal-socials"
 # at load rather than mid-run. (Not "TODO": this one is validated.)
 # timezone: "Asia/Manila"
 
+# Ids are not written here: each comes from the environment (LINKEDIN_ID_PERSONAL).
+# Unset means unpublishable, and a handle key here refuses to load. See .env.example.
 accounts:
   - platform: linkedin
-    handle: "TODO"
     enabled: true
   # NOTE: Facebook personal-profile posting is NOT possible via the Graph API
   # (publish_actions removed in v3.0, 2018). Create a Page or keep it manual.

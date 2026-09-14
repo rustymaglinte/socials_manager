@@ -22,12 +22,15 @@ approver identity. The agent cannot bypass that — it's a foreign key, not a pr
 
 | Brand | Platforms declared | Tier | Publishing today |
 |---|---|---|---|
-| personal | LinkedIn | personal | nothing — handle is `TODO`, no LinkedIn adapter |
-| pinoysing | FB Page, X, YouTube | brand | Facebook Page (live) |
-| derekt | FB Page, X, YouTube | brand (strict policy) | nothing — every id is `TODO` |
+| personal | LinkedIn | personal | nothing — no LinkedIn id set, no LinkedIn adapter |
+| pinoysing | FB Page, X, YouTube | brand | Facebook Page, whichever `FB_PAGE_ID_PINOYSING` names |
+| derekt | FB Page, X, YouTube | brand (strict policy) | nothing — no ids set |
 
 Facebook is the only adapter (`PUBLISHABLE_PLATFORMS`), so X and YouTube accounts
 are declared but never briefed.
+
+`brand.yaml` says which platforms a brand has; **the account ids come from the
+environment**, one variable per account — see [Environment](#environment).
 
 Brand is **runtime context, not a tool argument** — it resolves from the Slack
 channel before the model is invoked. A thread in `#social-pinoysing` cannot name a
@@ -148,9 +151,11 @@ bounded by `max_per_day` — on the brand's own clock:
 
 ```yaml
 cadence:
-  max_per_day: 5      # -> 09:00, 11:00, 13:00, 15:00, 17:00 Asia/Manila
-  every_hours: 2
-  first_slot: "09:00"
+  max_per_day: 2      # -> 12:00, 19:00 Asia/Manila
+  max_per_week: 14
+  every_hours: 7
+  first_slot: "12:00"
+  approval_hours: 3   # optional ceiling on the reviewer's window
 ```
 
 Mentioning the bot still works at any hour — the slot schedule gates only what
@@ -160,7 +165,10 @@ a flag, which is what keeps `max_per_day` honest.
 
 A brand without those two keys is driven by hand, so this is opt-in per brand.
 The reviewer gets most of the gap to the next slot to decide (90 minutes at a 2h
-cadence) rather than the 10 minutes a mention-driven run allows — and a slot
+cadence) rather than the 10 minutes a mention-driven run allows. A post
+publishes when it is approved, not at its slot, so wide slots want
+`approval_hours` as well: PinoySing's is 3, so its 19:00 draft expires at 22:00
+instead of being approvable, and publishable, after midnight. A slot
 missed by more than 45 minutes is skipped rather than caught up, because a
 stale post is worse than no post. `New-Item PAUSE_DRAFTING` halts drafting
 without stopping the publisher; approved posts keep going out.
@@ -199,8 +207,24 @@ Two that are easy to get wrong, and neither fails in an obvious way:
   brands sharing an id means one silently answers for the other. `start_listener`
   now refuses that too, rather than discovering it in a published post.
 
-Facebook Page tokens are `FB_PAGE_TOKEN_<SLUG>`, one per brand, resolved by
-[app/credentials/tokens.py](app/credentials/tokens.py). Nothing reads a YouTube,
+Account ids live here too, not in `brand.yaml`, because which Page a brand posts
+to is deployment state — the live Page on Railway, the test Page on a laptop:
+
+| Platform | Id | Token |
+|---|---|---|
+| Facebook | `FB_PAGE_ID_<SLUG>` | `FB_PAGE_TOKEN_<SLUG>` |
+| X | `X_HANDLE_<SLUG>` | `X_TOKEN_<SLUG>` |
+| YouTube | `YOUTUBE_CHANNEL_ID_<SLUG>` | `YOUTUBE_TOKEN_<SLUG>` |
+| LinkedIn | `LINKEDIN_ID_<SLUG>` | `LINKEDIN_TOKEN_<SLUG>` |
+
+An unset id makes that account unpublishable: nothing is drafted for it, and the
+error names the variable. A `page_id`, `handle` or `channel_id` left in a
+`brand.yaml` **refuses to load** rather than being ignored, so a yaml edit can
+never silently disagree with the environment about which Page gets the post.
+Ids are read once at startup, so changing one takes a restart.
+
+Ids are read by the brand loader ([app/domain/brand/loader.py](app/domain/brand/loader.py));
+Facebook Page tokens by [app/credentials/tokens.py](app/credentials/tokens.py). Nothing reads a YouTube,
 X or LinkedIn credential yet; when the YouTube adapter lands, keep Google's
 downloaded OAuth client JSON in `secrets/` (gitignored) or outside the repo,
 never in the project root.

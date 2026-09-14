@@ -248,7 +248,8 @@ async def approving_verdict(
 # affordable.
 TOPIC_MAX_CHARS = 80
 
-# Roughly a week at pinoysing's cadence (5/day, 35/week). Deliberately counted
+# Nearly two weeks at pinoysing's cadence (2/day, 14/week), so in practice
+# RECENT_DAYS below is the bound that bites. Deliberately counted
 # in posts rather than days: a brand posting five times a day and one posting
 # twice a week need the same "what have I just said", not the same fortnight.
 RECENT_TOPICS = 25

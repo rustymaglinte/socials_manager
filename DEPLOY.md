@@ -23,11 +23,16 @@ private network and needs no TLS parameters. The public/proxy url works too:
 ## 2. Environment
 
 Copy every variable from `.env.example` into **both** services. The publisher
-resolves brands and Page tokens exactly as the scheduler does, so it needs the
-same list — including the Slack channel ids, which the brand loader reads on
-boot.
+resolves brands, Page ids and Page tokens exactly as the scheduler does, so it
+needs the same list — including the Slack channel ids, which the brand loader
+reads on boot.
 
-Two that bite:
+Three that bite:
+
+- **`FB_PAGE_ID_PINOYSING` must be set on both.** Account ids are not in
+  `brand.yaml`. Without it the scheduler drafts nothing for PinoySing and the
+  publisher dead-letters its approved posts, each saying which variable is
+  missing. It is read at boot, so changing it needs a redeploy of both.
 
 - **All three `SLACK_*_CHANNEL_ID` must be set**, including brands you are not
   drafting for. `start_listener` refuses to boot otherwise.
@@ -70,7 +75,8 @@ Carried over from the pre-deploy review; none is a build problem.
   process memory, so a restart drops the in-flight run and leaves a Slack
   message whose buttons still look live. Already-approved posts are unaffected —
   they are rows, and the publisher is a separate process. Deploy outside slot
-  windows (PinoySing drafts 09:00–17:00 Asia/Manila, every 2h) until the
+  windows (PinoySing drafts at 12:00 and 19:00 Asia/Manila, each open for 3h, so
+  12:00–15:00 and 19:00–22:00) until the
   Postgres checkpointer replaces it.
 - **Use the variable, not the file, to halt things.** FR-15's switch has two
   spellings. The file (`PAUSE_PUBLISHING` / `PAUSE_DRAFTING`) is the local
@@ -88,9 +94,12 @@ Carried over from the pre-deploy review; none is a build problem.
 
 ## Going live
 
-`brands/pinoysing/brand.yaml` points at the **live** Page (`111111111111111`),
-with the test Page id (`2222222222222222`) commented out beside it. Swap them to
-go back to UAT — a deliberate, separate change either way.
+Which Page PinoySing posts to is `FB_PAGE_ID_PINOYSING`: the **live** Page is
+`111111111111111`, the test Page `2222222222222222`. Set it per environment —
+live on Railway, test locally — rather than committing a swap. Changing it on
+Railway means changing it on both services and redeploying. `FB_PAGE_TOKEN_PINOYSING`
+must be a token for the same Page; `python -m scripts.fb_publish check pinoysing`
+compares the two.
 
 The Meta app must also be in **Live mode**, or every post the API makes is
 visible only to people with a role on the app: the Page owner sees it, followers

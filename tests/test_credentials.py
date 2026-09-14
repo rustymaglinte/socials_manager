@@ -59,14 +59,15 @@ def test_a_disabled_account_is_not_a_missing_one():
         account_for(brand, "facebook")
 
 
-def test_an_id_still_at_its_placeholder():
-    """brand.yaml ships as a template full of TODOs (SPECS Q2). Draftable, but
-    not publishable, and the error should say which."""
+@pytest.mark.parametrize("external_id", [None, "TODO"])
+def test_an_id_not_set_names_the_variable_to_set(external_id):
+    """Ids come from the environment, so the fix is a variable, not brand.yaml."""
     brand = make_brand(
-        accounts=(Account(platform="x", enabled=True, external_id="TODO"),)
+        accounts=(Account(platform="x", enabled=True, external_id=external_id),)
     )
-    with pytest.raises(CredentialsMissing, match="placeholder"):
+    with pytest.raises(CredentialsMissing, match="Set X_HANDLE_DEREKT in .env") as raised:
         account_for(brand, "x")
+    assert "brand.yaml" not in str(raised.value)
 
 
 # --- the token ------------------------------------------------------------

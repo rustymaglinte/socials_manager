@@ -23,6 +23,28 @@ _DAY_MINUTES = 24 * 60
 DEFAULT_TIMEZONE = "UTC"
 
 
+# How each platform's account id is named in the environment, as
+# `<PREFIX>_<SLUG>`. Beside `app.credentials.tokens._TOKEN_PREFIX` in spirit --
+# FB_PAGE_ID_PINOYSING next to FB_PAGE_TOKEN_PINOYSING -- but defined here,
+# because the loader needs the id to decide whether an account is publishable
+# and the domain cannot import the credentials layer.
+#
+# Ids are not in brand.yaml: which Page a brand posts to is deployment state
+# (the live Page on Railway, the test Page on a laptop), not brand identity.
+ACCOUNT_ID_PREFIX = {
+    "facebook": "FB_PAGE_ID",
+    "linkedin": "LINKEDIN_ID",
+    "x": "X_HANDLE",
+    "youtube": "YOUTUBE_CHANNEL_ID",
+}
+
+
+def account_id_env_var(slug: str, platform: str) -> str | None:
+    """`pinoysing`, `facebook` -> `FB_PAGE_ID_PINOYSING`; None for an unknown platform."""
+    prefix = ACCOUNT_ID_PREFIX.get(platform)
+    return f"{prefix}_{slug.upper()}" if prefix else None
+
+
 class BrandNotFound(LookupError):
     """No such brand directory, or no brand bound to that channel."""
 
@@ -51,7 +73,10 @@ class Account:
 
     @property
     def configured(self) -> bool:
-        """False while the yaml still says TODO.
+        """False while the environment has no id for it (`account_id_env_var`).
+
+        The TODO check predates ids leaving brand.yaml and is kept: a
+        `FB_PAGE_ID_X=TODO` copied from a template is still not a Page.
 
         Nothing is drafted for such an account either (`app.agent.targets`): a
         post nobody can publish still costs a model call and a reviewer's
@@ -134,6 +159,10 @@ class BrandContext:
     # so adding a cron to one brand cannot start one for the others.
     every_hours: int = 0
     first_slot: time | None = None
+    # Ceiling on how long a scheduled draft waits for a reviewer. Zero means the
+    # gap to the next slot decides. Needed once slots are far apart: a post
+    # publishes when it is approved, so a long window is a late post.
+    approval_hours: int = 0
 
     @property
     def post_slots(self) -> tuple[time, ...]:
@@ -171,8 +200,8 @@ class BrandContext:
         """Enabled accounts with a real id behind them.
 
         `enabled_accounts` is which platforms the brand *wants*; this is which
-        of them a post could actually reach. The difference is a TODO left in
-        brand.yaml, which is draftable but not publishable (see `configured`).
+        of them a post could actually reach. The difference is an id variable
+        not set in the environment (see `configured`).
         """
         return tuple(
             account for account in self.enabled_accounts if account.configured

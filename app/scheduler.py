@@ -211,12 +211,18 @@ def approval_window(brand: BrandContext, now: datetime) -> int:
     without the cap the evening draft would be the one post that could be
     approved at breakfast and publish a day stale. Better to let it time out --
     an expired draft costs a search, a stale post costs the feed.
+
+    `cadence.approval_hours` lowers that ceiling further, and only lowers it. A
+    post publishes when it is approved, not at its slot, so with slots seven
+    hours apart the gap alone would let the 19:00 draft go out at 01:30.
     """
     upcoming = next_slot(brand, now)
     if upcoming is None:
         return DEFAULT_TIMEOUT_SECONDS
 
     gap = min(upcoming - now, timedelta(hours=brand.every_hours)) - APPROVAL_MARGIN
+    if brand.approval_hours > 0:
+        gap = min(gap, timedelta(hours=brand.approval_hours))
     return max(int(gap.total_seconds()), DEFAULT_TIMEOUT_SECONDS)
 
 
