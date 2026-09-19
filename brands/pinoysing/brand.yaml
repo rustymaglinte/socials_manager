@@ -9,7 +9,7 @@ timezone: "Asia/Manila"
 
 # Ids are not written here: each comes from the environment, so the live and
 # test Page are a variable apart rather than a commit apart.
-#   FB_PAGE_ID_PINOYSING   live 111111111111111, test 2222222222222222
+#   FB_PAGE_ID_PINOYSING   the live Page's id, or the test Page's
 #   X_HANDLE_PINOYSING, YOUTUBE_CHANNEL_ID_PINOYSING
 # Unset means unpublishable, and a page_id/handle/channel_id key here refuses
 # to load. See .env.example.

@@ -94,8 +94,8 @@ Carried over from the pre-deploy review; none is a build problem.
 
 ## Going live
 
-Which Page PinoySing posts to is `FB_PAGE_ID_PINOYSING`: the **live** Page is
-`111111111111111`, the test Page `2222222222222222`. Set it per environment —
+Which Page PinoySing posts to is `FB_PAGE_ID_PINOYSING`: the **live** Page's id
+or the test Page's. Set it per environment —
 live on Railway, test locally — rather than committing a swap. Changing it on
 Railway means changing it on both services and redeploying. `FB_PAGE_TOKEN_PINOYSING`
 must be a token for the same Page; `python -m scripts.fb_publish check pinoysing`

@@ -67,7 +67,7 @@ htmlcov/
 !.vscode/settings.json
 !.vscode/extensions.json
 .idea/
-.claude/settings.local.json
+.claude/
 Thumbs.db
 desktop.ini
 .DS_Store
