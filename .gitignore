@@ -68,6 +68,7 @@ htmlcov/
 !.vscode/extensions.json
 .idea/
 .claude/
+PRIVACY_POLICY.md
 Thumbs.db
 desktop.ini
 .DS_Store

@@ -236,7 +236,7 @@ never in the project root.
 - **The Meta app must be in Live mode.** A Development-mode app can post to a
   Page its developer administers, but those posts are visible only to people
   with a role on the app — the Page owner sees them, followers do not. Live mode
-  needs a privacy policy URL ([PRIVACY_POLICY.md](PRIVACY_POLICY.md)), not App
+  needs a privacy policy URL (`PRIVACY_POLICY.md`, gitignored), not App
   Review: Standard Access to `pages_manage_posts` covers Pages you administer.
 - **LinkedIn** personal posting is self-serve (`w_member_social`, no partner
   review), but tokens expire in **60 days** — the refresher is not optional.

@@ -294,7 +294,7 @@ No App Review: Standard Access to `pages_manage_posts` covers Pages the app's
 developer administers, which is all of them. But the app must be in **Live
 mode** — posts made by a Development-mode app are visible only to people with a
 role on the app, so the owner sees them and followers do not. Live mode needs a
-public privacy policy URL (`PRIVACY_POLICY.md`).
+public privacy policy URL (`PRIVACY_POLICY.md`, gitignored).
 
 Permissions in use: `pages_manage_posts` (publish text and photos),
 `pages_read_engagement` (read posts back), `pages_show_list` and

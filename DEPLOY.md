@@ -103,7 +103,7 @@ compares the two.
 
 The Meta app must also be in **Live mode**, or every post the API makes is
 visible only to people with a role on the app: the Page owner sees it, followers
-do not. Switching needs a privacy policy URL ([PRIVACY_POLICY.md](PRIVACY_POLICY.md),
+do not. Switching needs a privacy policy URL (`PRIVACY_POLICY.md`, gitignored and
 published somewhere public), an app icon and a category, under App Settings →
 Basic. No App Review — Standard Access covers Pages you administer. Check the
 first post afterwards from a logged-out browser, not the owner's account.
