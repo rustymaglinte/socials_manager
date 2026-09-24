@@ -52,7 +52,7 @@ theme:
   ground: "#3A3A38" # charcoal
   accent: "#F5D24E" # the wordmark yellow
   muted: "#CFCBBD" # subtitle grey, legible on ground
-  wordmark: "PinoySing"
+  wordmark: "PinoySing.com"
   tagline: "online karaoke"
   # Which look each brief angle gets. The template is a property of the angle,
   # so a new look is a line here rather than a code change.
